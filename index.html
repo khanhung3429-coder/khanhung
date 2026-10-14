@@ -20,7 +20,7 @@
 </style>
 </head>
 <body>
-<h1>Chuỗi từ nối (<span id="count"></span> từ)</h1>
+<h1>Chuỗi nối từ (<span id="count"></span> từ)</h1>
 <div id="bar">
   <button id="toggle">▶ Cuộn tự động</button>
   <label>Tốc độ <input type="range" id="speed" min="10" max="400" value="60"> <span id="sv">60</span></label>
@@ -87,9 +87,10 @@ const syl = RAW.trim().split(/\s+/);
 const words = [];
 for (let i = 0; i < syl.length - 1; i++) words.push(syl[i] + " " + syl[i + 1]);
 
+
 document.getElementById("count").textContent = words.length;
 document.getElementById("list").innerHTML =
-  words.map((w, i) => `<li><b>${i + 1}</b><span>${w}</span></li>`).join("");
+  words.map((w, i) => `<li><b>${i + 1}</b><span>&nbsp;</span></li>`).join("");
 
 
 let running=false,last=0,pos=0;
