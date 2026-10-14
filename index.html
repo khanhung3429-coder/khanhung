@@ -11,9 +11,11 @@
   #bar{position:sticky;top:0;background:inherit;padding:8px 0;margin-bottom:8px;border-bottom:1px solid #ccc;display:flex;gap:12px;justify-content:center;align-items:center;flex-wrap:wrap;z-index:1}
   #bar{background:#fafafa}
   @media(prefers-color-scheme:dark){#bar{background:#181818;border-color:#333}}
-  ol{padding-left:0;list-style:none;margin:0}
-  li{padding:2px 0;border-bottom:1px solid #eee}
-  li b{color:#888;font-weight:normal;margin-right:6px}
+  ol{padding:0;list-style:none;margin:0;display:flex;flex-direction:column;gap:6px;align-items:center}
+  li{display:flex;align-items:center;gap:12px;width:100%;max-width:280px;padding:5px 10px;background:#fff;border:1px solid #d5d9e0;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);font-size:17px;font-weight:600;text-align:left}
+  li b{flex:none;min-width:40px;padding:1px 6px;background:#eef1f6;color:#667;border-radius:8px;font-size:12px;font-weight:600;text-align:center}
+  li span{flex:1;text-align:center;letter-spacing:.3px}
+  @media(prefers-color-scheme:dark){li{background:#222;border-color:#444}li b{background:#333;color:#aaa}}
   @media(prefers-color-scheme:dark){body{background:#181818;color:#eee}li{border-color:#333}}
 </style>
 </head>
@@ -87,7 +89,7 @@ for (let i = 0; i < syl.length - 1; i++) words.push(syl[i] + " " + syl[i + 1]);
 
 document.getElementById("count").textContent = words.length;
 document.getElementById("list").innerHTML =
-  words.map((w, i) => `<li><b>${i + 1}.</b>${w}</li>`).join("");
+  words.map((w, i) => `<li><b>${i + 1}</b><span>${w}</span></li>`).join("");
 
 
 let running=false,last=0,pos=0;
