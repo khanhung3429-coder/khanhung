@@ -1,0 +1,1558 @@
+// ==UserScript==
+// @name         xịn - không cụt
+// @namespace    http://tampermonkey.net/
+// @version      9.3
+// @description  v9.3: đánh số thứ tự từng cặp từ của chuỗi (1. học hành, 2. hành quân, ...) cố định, theo dõi tuần tự không nhảy số. v9.2: tự sao chép từ cuối (âm tiết thứ 2) của gợi ý, chỉ copy, không tự dán/gửi (trừ chế độ Tự động). Bản ẩn từ cụt: không gợi ý/không đánh từ cụt, phân tích chuỗi dài nhất để nối được nhiều từ nhất. Bỏ xem trước từ tiếp theo khi chạm giữ gợi ý. Giữ chế độ Gom Từ (16 ô). v9.1: dẫn tới "học hành" (tránh mọi từ trong chuỗi 509 từ), bắt được chuỗi thì hiện thông báo cố định rồi đi theo chuỗi.
+// @author       You
+// @match        https://*.noitu.fun/*
+// @match        https://noitu.fun/*
+// @run-at       document-end
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const FIREBASE_DB_URL = "https://khotu-fc3e7-default-rtdb.asia-southeast1.firebasedatabase.app";
+    const byFirst = new Map();
+    const trapSet = new Set();
+    let totalValidWords = 0;
+    let dictReady = false;
+
+    // ===================== CHUỖI: dẫn tới "học hành" rồi đi theo chuỗi =====================
+    // Chuỗi 520 từ lưu dạng âm tiết nối tiếp: từ thứ i = S[i-1] + ' ' + S[i]
+    const CHAIN_SYL = `
+học
+hành quân nhân công nhân hậu phương pháp nhân văn
+bản đồ ăn nói bóng đèn cầy hương hoa hậu trường
+sinh hạ bộ máy móc câu thơ ca khúc ca
+dao động cơ quan âm đạo lý giải độc thân
+nhân sinh thành công khai thông công danh nhân tài
+chính quốc nội công lập phương thuốc lá bài học
+sinh tử cung cầu toàn cầu cứu tinh thông số
+lượng tử hình thành văn học trò chơi bời bời lời
+nói ra đi ra vào ra mắt kính phục sinh
+trưởng thành viên chức danh tài hoa quả báo động
+kinh hoàng thượng sách phong hoá trị bệnh án lệ phí
+phạm tội phạm pháp danh từ đầu quân tử thần tượng hình
+thể thao túng thiếu sót lại nữa rồi nữa là
+lạ đời sống còn lại bộ mặt mũi khoan dung
+tha tội lỗi lầm lỗi hẹn hò hẹn thề ước
+lượng thứ trưởng đoàn trưởng phòng họp hành doanh nhân
+từ bỏ đi biệt danh tính nết na ná ná
+thở dài dài dòng máu lạnh người lạ thường dân
+quân hàm số phận sự cố nhân tình hình hài
+hoà đồng thanh âm thanh minh thệ sư phụ bạc
+tình đầu tiên nghiệm thu liễm dung nạp thái ất
+giáp trụ cột điện thoại đàm thoại bản địa hình
+thù vặt lông lá chét tay chân chính thất lạc
+đường dây dẫn đường đi làm ăn năn nỉ nài
+nỉ non nước hoa văn hoá giải pháp trường thọ
+tiễn đưa tiễn biệt động lòng mề đay nghiến ngấu
+nghiến răng nanh vuốt ve sầu riêng tư nhân quả tạ
+lỗi thời lượng giác ngộ đạo sư phạm vi khuẩn lao phổi phèo phổi
+heo heo nái heo hút máu mặt nạ dòng chảy
+máu lửa hận thù hận đời kiếp đời sau đó
+đây đẩy đưa đẩy mạnh mẽ ngoài đường cùng đường bộ
+trưởng thôn xóm làng chài bài toán lý thuyết lý
+sự lý luận điểm danh sách vở kịch bản nhạc
+điệu hò reo hò khoan thủng thỉnh kinh động tác
+dụng cụ bà lão luyện tập trung lập công giáo
+hội chứng cứ điểm xạ thủ thuật toán học lệch
+pha trộn lẫn lộn ngược xuôi ngược dòng điện lưới
+rê bóng chuyền tay lái xe máy bay nhảy cóc
+tía tô vẽ tranh biện pháp y thuật ngữ vựng
+tập hợp đồng hương sen tắm táp nhau thai nghén
+ăn ý nghĩ thầm lặng lặng lẽ phải lứa đôi
+mươi hai lòng dạ dịp vui vẻ vang vọng niệm
+phật sống động từ ngữ văn hiến chương chướng mắt
+mũi tẹt mũi tên lửa trại hè thu gom góp
+mặt phẳng lặng câm lặng im lặng người tình trạng
+thái hậu thế phiệt duyệt bài làm chủ quan thoại
+kịch liệt sĩ quan tài khoản vay mượn cớ sự
+vật thể chất độc ác nhân bản thân thương cảm
+tình cảm tử nạn dân sự tích đức hạnh phúc
+hậu bối cảnh quan chức năng động thổ cư ngụ
+tình báo thù ghét bỏ qua mặt mẹt cơm
+    `.trim().split(/\s+/);
+    const TONE_FIX = { 'oá': 'óa', 'oà': 'òa', 'oả': 'ỏa', 'oã': 'õa', 'oạ': 'ọa', 'oé': 'óe', 'oè': 'òe', 'oẻ': 'ỏe', 'oẽ': 'õe', 'oẹ': 'ọe', 'uý': 'úy', 'uỳ': 'ùy', 'uỷ': 'ủy', 'uỹ': 'ũy', 'uỵ': 'ụy' };
+    // Chuẩn hoá cách bỏ dấu (hoá/hóa, thuý/thúy...) để so khớp chuỗi với kho từ
+    function toneSyl(sy) {
+        sy = (sy || '').normalize('NFC');
+        const m = sy.match(/^(.*?)(o[áàảãạéèẻẽẹ]|u[ýỳỷỹỵ])$/);
+        if (!m) return sy;
+        if (m[2][0] === 'u' && m[1].endsWith('q')) return sy;
+        return m[1] + TONE_FIX[m[2]];
+    }
+    function toneKey(w) {
+        return (w || '').trim().toLowerCase().replace(/\s+/g, ' ').split(' ').map(toneSyl).join(' ');
+    }
+    const CHAIN_LEN = CHAIN_SYL.length - 1;
+    // Số thứ tự cố định: cặp thứ n (n = 1..CHAIN_LEN) = CHAIN_SYL[n-1] + ' ' + CHAIN_SYL[n]
+    //   1. học hành   2. hành quân   3. quân nhân   ...
+    const CHAIN_WORDS = [];
+    for (let i = 1; i < CHAIN_SYL.length; i++) CHAIN_WORDS.push(CHAIN_SYL[i - 1] + ' ' + CHAIN_SYL[i]);
+    function chainNoOf(w) {                // số thứ tự (1-based) của một từ trong chuỗi, 0 nếu không thuộc chuỗi
+        const ps = chainIdx.get(toneKey(w));
+        return ps && ps.length ? ps[0] + 1 : 0;
+    }
+    const chainIdx = new Map();            // toneKey(từ) -> MẢNG các vị trí trong chuỗi (0 = "học hành")
+    for (let i = 1; i < CHAIN_SYL.length; i++) {
+        const k = toneKey(CHAIN_SYL[i - 1] + ' ' + CHAIN_SYL[i]);
+        if (!chainIdx.has(k)) chainIdx.set(k, []);
+        chainIdx.get(k).push(i - 1);          // từ có thể lặp lại nhiều lần trong chuỗi
+    }
+    const CHAIN_HEAD = toneKey(CHAIN_SYL[0] + ' ' + CHAIN_SYL[1]);   // "học hành"
+    const CHAIN_HEAD_SYL = toneSyl(CHAIN_SYL[0]);                    // "học"
+    const chainState = { caught: false, idx: -1, pending: -1 };   // idx = vị trí (0-based) của từ vừa đánh; số hiển thị = idx + 1
+    const chainDictWords = new Set();      // từ trong kho (đúng dạng kho) thuộc chuỗi
+    const keyToWord = new Map();           // toneKey -> từ đúng dạng kho
+    const byLast = new Map();              // âm tiết cuối (toneKey) -> [{w, p}]
+
+    // ===================== GOM TỪ: dùng chung kho từ Firebase với Nối Từ =====================
+    function gtUpdateStatus() {
+        const el = document.getElementById('wd-gt-status');
+        if (!el) return;
+        if (dictReady) {
+            el.textContent = '● ' + totalValidWords.toLocaleString('vi-VN');
+            el.style.color = '#4ade80';
+        } else {
+            el.textContent = '● Lỗi tải';
+            el.style.color = '#f87171';
+        }
+    }
+
+    // Dựng lại tập "t1 t2" -> hiển thị gốc từ chỉ mục byFirst đã có sẵn (không tải thêm dữ liệu)
+    function gtFindValidCombos(syllables) {
+        if (!byFirst.size) return [];
+        const lowerSyllables = syllables.map(s => s.toLowerCase());
+        const results = [];
+        const seen = new Set();
+        for (const t1 of lowerSyllables) {
+            const opts = byFirst.get(t1);
+            if (!opts) continue;
+            for (const full of opts) {
+                const t2 = full.split(' ')[1];
+                if (lowerSyllables.includes(t2) && !seen.has(full)) {
+                    seen.add(full);
+                    results.push(full);
+                }
+            }
+        }
+        return results;
+    }
+
+    function normWord(w) {
+        return (w || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    }
+
+    function buildIndex(entries) {
+        byFirst.clear();
+        trapSet.clear();
+        byLast.clear();
+        keyToWord.clear();
+        chainDictWords.clear();
+        const validSet = new Set();
+        for (const entry of entries) {
+            const word = (typeof entry === 'string') ? entry : entry.w;
+            const trap = (typeof entry === 'object' && entry) ? !!entry.trap : false;
+            if (!word) continue;
+            const norm = normWord(word);
+            const parts = norm.split(' ');
+            if (parts.length !== 2) continue;
+            validSet.add(norm);
+            if (trap) trapSet.add(norm);
+            const first = parts[0];
+            if (!byFirst.has(first)) byFirst.set(first, []);
+            byFirst.get(first).push(norm);
+            const wk = toneKey(norm);
+            const wkp = wk.split(' ');
+            if (!byLast.has(wkp[1])) byLast.set(wkp[1], []);
+            byLast.get(wkp[1]).push({ w: norm, p: wkp[0] });
+            if (!keyToWord.has(wk)) keyToWord.set(wk, norm);
+            if (chainIdx.has(wk)) chainDictWords.add(norm);
+        }
+        totalValidWords = validSet.size;
+    }
+
+    function loadWords() {
+        fetch(`${FIREBASE_DB_URL}/words.json`)
+            .then(r => r.json())
+            .then(data => {
+                const entries = data ? Object.values(data) : [];
+                buildIndex(entries);
+                dictReady = true;
+                updateDictStatus();
+                if (lastText) renderSuggestions(lastText);
+            })
+            .catch(() => {
+                dictReady = false;
+                updateDictStatus();
+            });
+    }
+
+    function updateDictStatus() {
+        const statusEl = document.getElementById('wd-status');
+        if (!statusEl) return;
+        if (dictReady) {
+            statusEl.textContent = `● ${totalValidWords.toLocaleString('vi-VN')}`;
+            statusEl.style.color = '#4ade80';
+        } else {
+            statusEl.textContent = '● Lỗi tải';
+            statusEl.style.color = '#f87171';
+        }
+    }
+
+    function isDeadEndWord(word, badWords) {
+        const ns = word.split(' ')[1];
+        const opts = byFirst.get(ns) || [];
+        return opts.filter(w => w !== word && !badWords.has(w) && !usedWords.has(w)).length === 0;
+    }
+
+
+    function loadBadWords() {
+        try {
+            const raw = localStorage.getItem('wd_bad_words');
+            return raw ? new Set(JSON.parse(raw)) : new Set();
+        } catch (e) { return new Set(); }
+    }
+    function saveBadWords(set) {
+        try { localStorage.setItem('wd_bad_words', JSON.stringify([...set])); } catch (e) {}
+    }
+    const badWords = loadBadWords();
+
+    // ===== Nền bảng: đen / trong suốt =====
+    let darkBg = (function () {
+        try {
+            const v = localStorage.getItem('wd_dark_bg');
+            return v === null ? true : v === '1';
+        } catch (e) { return true; }
+    })();
+    function saveDarkBg(on) {
+        try { localStorage.setItem('wd_dark_bg', on ? '1' : '0'); } catch (e) {}
+    }
+
+    function injectStyles() {
+        if (document.getElementById('wd-style-tag')) return;
+        const style = document.createElement('style');
+        style.id = 'wd-style-tag';
+        style.textContent = `
+            :root {
+                --wd-accent: #00e5c7;
+                --wd-accent-2: #00b8a0;
+                --wd-ok: #4ade80;
+                --wd-dead: #ff5c7a;
+                --wd-trap: #ff8c00;
+                --wd-risk: #ffd700;
+                --wd-riskdead: #c9a9ff;
+                --wd-radius: 14px;
+            }
+
+            #wd-mobile-panel {
+                position: fixed !important;
+                top: 8px !important;
+                left: 4% !important;
+                width: 92% !important;
+                max-width: 400px;
+                z-index: 9999999 !important;
+                border: 1px solid rgba(0,229,199,0.35) !important;
+                border-radius: var(--wd-radius) !important;
+                padding: 8px !important;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.02) inset !important;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+                color: #fff !important;
+                box-sizing: border-box !important;
+                transition: background .2s ease, box-shadow .2s ease;
+            }
+            #wd-mobile-panel.dark-bg {
+                background: rgba(14, 15, 22, 0.72) !important;
+                backdrop-filter: blur(8px);
+                -webkit-backdrop-filter: blur(8px);
+            }
+            #wd-mobile-panel.transparent-bg {
+                background: transparent !important;
+                backdrop-filter: none;
+                -webkit-backdrop-filter: none;
+            }
+
+            #wd-header {
+                display: flex; justify-content: space-between; align-items: center;
+                margin-bottom: 6px; cursor: grab; user-select: none;
+                gap: 6px;
+            }
+            #wd-title {
+                font-size: 9.5px; letter-spacing: .07em; font-weight: 800;
+                color: rgba(255,255,255,0.35); text-transform: uppercase;
+                flex-shrink: 0;
+                display: flex; align-items: center; gap: 4px;
+            }
+            #wd-title::before {
+                content: ''; width: 5px; height: 5px; border-radius: 50%;
+                background: var(--wd-accent); box-shadow: 0 0 6px var(--wd-accent);
+                display: inline-block;
+            }
+            #wd-controls {
+                display: flex; align-items: center; gap: 3px;
+                flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+                max-width: 100%; -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+            }
+            #wd-controls::-webkit-scrollbar { display: none; }
+            .wd-btn {
+                border: none; border-radius: 7px; padding: 4px 7px; font-size: 10px;
+                font-weight: 700; cursor: pointer; transition: transform .12s ease, opacity .12s ease;
+                letter-spacing: .01em; white-space: nowrap; flex-shrink: 0;
+            }
+            #wd-toggle { flex-shrink: 0; }
+            #wd-status { flex-shrink: 0; }
+            .wd-btn:active { transform: scale(0.92); }
+            #wd-auto { background: rgba(255,255,255,0.07); color: #9aa5b1; }
+            #wd-auto.on { background: linear-gradient(135deg,#10b981,#059669); color: #fff; box-shadow: 0 0 10px rgba(16,185,129,.45); }
+            #wd-bg-toggle { background: rgba(255,255,255,0.07); color: #9aa5b1; font-size: 11px; padding: 4px 7px; }
+            #wd-clear { background: rgba(248,113,113,0.12); color: #f7a8a8; }
+            #wd-status { font-size: 9.5px; font-weight: 700; white-space: nowrap; color: rgba(255,255,255,0.4); padding: 0 2px; }
+            #wd-toggle {
+                background: linear-gradient(135deg,var(--wd-accent),var(--wd-accent-2)); color: #052018;
+                border-radius: 50%; width: 20px; height: 20px; font-size: 13px; font-weight: 900;
+                display: flex; align-items: center; justify-content: center; line-height: 1;
+                padding: 0;
+            }
+
+            #wd-mini-panel {
+                position: fixed !important;
+                top: 8px !important;
+                left: 50% !important;
+                transform: translateX(-50%);
+                z-index: 9999999 !important;
+                border: 1px solid rgba(0,229,199,0.4) !important;
+                border-radius: 999px !important;
+                padding: 7px 16px !important;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+                display: none;
+                align-items: center;
+                gap: 6px;
+                cursor: pointer;
+                user-select: none;
+                transition: background .2s ease, box-shadow .2s ease, transform .1s ease;
+            }
+            #wd-mini-panel:active { transform: translateX(-50%) scale(0.96); }
+            #wd-mini-panel.show { display: flex; }
+            #wd-mini-panel.dark-bg {
+                background: rgba(14, 15, 22, 0.45) !important;
+                box-shadow: 0 6px 18px rgba(0,0,0,0.4) !important;
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+            }
+            #wd-mini-panel.transparent-bg {
+                background: transparent !important;
+                box-shadow: none !important;
+                backdrop-filter: none;
+                -webkit-backdrop-filter: none;
+            }
+            #wd-mini-word {
+                font-size: 15px; font-weight: 800; color: var(--wd-ok);
+                text-shadow: 0 0 10px rgba(74,222,128,0.4);
+                white-space: nowrap;
+            }
+            #wd-mini-hint {
+                font-size: 9px; color: rgba(255,255,255,0.35);
+                white-space: nowrap;
+            }
+
+            #wd-body { display: flex; flex-direction: column; }
+            #wd-body-assist { display: flex; flex-direction: column; gap: 6px; }
+
+            #wd-original-card {
+                background: rgba(0,229,199,0.07);
+                border: 1px solid rgba(0,229,199,0.2);
+                border-radius: 11px;
+                padding: 7px 10px;
+                display: flex; align-items: baseline; justify-content: center; gap: 6px;
+            }
+            #wd-original-label {
+                font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
+                color: rgba(255,255,255,0.35); font-weight: 700;
+            }
+            #wd-original {
+                font-size: 16px; font-weight: 800; color: #fff;
+                letter-spacing: .01em;
+            }
+
+            #wd-legend {
+                display: flex; flex-wrap: wrap; gap: 5px 10px; justify-content: center;
+                font-size: 8.5px; color: rgba(255,255,255,0.35);
+            }
+            .wd-legend-item { display: flex; align-items: center; gap: 3px; }
+            .wd-legend-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+
+            #wd-suggest {
+                display: flex; flex-wrap: wrap; gap: 5px; justify-content: center;
+                max-height: 24vh; overflow-y: auto;
+                background: rgba(0,0,0,0.22);
+                border: 1px solid rgba(255,255,255,0.05);
+                border-radius: 11px; padding: 8px;
+            }
+            #wd-suggest::-webkit-scrollbar { width: 4px; }
+            #wd-suggest::-webkit-scrollbar-thumb { background: rgba(0,229,199,0.35); border-radius: 4px; }
+            .wd-sugg {
+                padding: 6px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+                cursor: pointer; transition: transform .1s ease, filter .1s ease;
+                border-width: 1.25px; border-style: solid;
+                position: relative;
+            }
+            .wd-sugg:active { transform: scale(0.9); filter: brightness(1.2); }
+            .wd-empty-msg { font-size: 11.5px; padding: 5px; color: rgba(255,255,255,0.45); }
+            .wd-score-badge {
+                position: absolute; top: -6px; right: -4px;
+                background: rgba(0,0,0,0.8); color: #fff;
+                font-size: 8px; font-weight: 800; padding: 1px 4px;
+                border-radius: 6px; border: 1px solid rgba(255,255,255,0.18);
+            }
+
+            #wd-ai-row {
+                background: linear-gradient(135deg, rgba(16,185,129,0.14), rgba(0,180,255,0.09));
+                border: 1px solid rgba(16,185,129,0.35);
+                border-radius: 11px;
+                padding: 9px 10px;
+                text-align: center;
+            }
+            #wd-ai-label {
+                font-size: 9px; text-transform: uppercase; letter-spacing: .07em;
+                color: rgba(255,255,255,0.4); margin-bottom: 3px; font-weight: 700;
+                display: flex; align-items: center; justify-content: center; gap: 5px;
+            }
+            #wd-ai-best {
+                font-size: 15px; font-weight: 800; color: var(--wd-ok);
+                text-shadow: 0 0 10px rgba(74,222,128,0.4);
+                margin-bottom: 2px;
+                cursor: pointer;
+            }
+            #wd-ai-reason {
+                font-size: 10.5px; color: rgba(255,255,255,0.55);
+                line-height: 1.3;
+            }
+            #wd-ai-best:active { transform: scale(0.96); }
+            #wd-ai-alt {
+                margin-top: 5px; padding-top: 5px;
+                border-top: 1px dashed rgba(255,255,255,0.12);
+                font-size: 9.5px; color: rgba(255,255,255,0.45);
+                display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;
+            }
+            .wd-ai-alt-item {
+                background: rgba(255,255,255,0.05);
+                padding: 3px 7px; border-radius: 999px;
+                cursor: pointer; font-weight: 700;
+            }
+            .wd-ai-alt-item:active { transform: scale(0.92); }
+
+            /* ===== Chế độ Gom Từ (16 ô) ===== */
+            #wd-mode-toggle {
+                background: rgba(255,255,255,0.07); color: #9aa5b1;
+                font-size: 10px; padding: 4px 8px;
+            }
+            #wd-mode-toggle.gt-active {
+                background: linear-gradient(135deg,var(--wd-accent),var(--wd-accent-2));
+                color: #052018;
+            }
+            #wd-body-grid { display: flex; flex-direction: column; gap: 6px; }
+            .wd-gt-section-label {
+                font-size: 9px; text-transform: uppercase; letter-spacing: .06em;
+                color: rgba(255,255,255,0.35); font-weight: 700; margin: 2px 0 1px 2px;
+            }
+            #wd-grid-syllables {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 5px;
+            }
+            .wd-syllable {
+                background: rgba(255,255,255,0.06);
+                color: #00ffcc;
+                border: 1px solid rgba(0,229,199,0.2);
+                border-radius: 8px;
+                padding: 8px 2px;
+                font-size: 12px;
+                font-weight: 700;
+                text-align: center;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                line-height: 1.3;
+                transition: background .15s, border-color .15s, transform .1s, box-shadow .15s;
+                cursor: pointer;
+            }
+            .wd-syllable.wd-empty-tile {
+                color: rgba(255,255,255,0.25);
+                font-size: 13px;
+            }
+            .wd-syllable.wd-lit {
+                background: linear-gradient(135deg,var(--wd-accent),var(--wd-accent-2));
+                color: #052018;
+                border-color: transparent;
+                box-shadow: 0 0 14px rgba(0,255,204,0.6);
+                transform: scale(1.06);
+            }
+            #wd-combo-words {
+                display: flex; flex-wrap: wrap; gap: 5px; justify-content: center;
+                max-height: 11vh; overflow-y: auto;
+                background: rgba(0,0,0,0.22);
+                border: 1px solid rgba(255,255,255,0.05);
+                border-radius: 11px; padding: 8px;
+                min-height: 20px;
+            }
+            #wd-combo-words::-webkit-scrollbar { width: 4px; }
+            #wd-combo-words::-webkit-scrollbar-thumb { background: rgba(0,229,199,0.35); border-radius: 4px; }
+            .wd-combo {
+                background: rgba(0,255,204,.10);
+                color: #7fffd4;
+                border: 1.25px solid #00ffcc;
+                border-radius: 999px;
+                padding: 6px 11px;
+                font-size: 12.5px;
+                font-weight: 700;
+                white-space: nowrap;
+                cursor: pointer;
+                transition: background .15s, transform .1s;
+            }
+            .wd-combo:active { transform: scale(0.95); }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function applyBgMode(panel) {
+        if (!panel) panel = document.getElementById('wd-mobile-panel');
+        if (panel) {
+            panel.classList.toggle('dark-bg', darkBg);
+            panel.classList.toggle('transparent-bg', !darkBg);
+        }
+
+        const miniPanel = document.getElementById('wd-mini-panel');
+        if (miniPanel) {
+            miniPanel.classList.toggle('dark-bg', darkBg);
+            miniPanel.classList.toggle('transparent-bg', !darkBg);
+        }
+
+        const btn = document.getElementById('wd-bg-toggle');
+        if (btn) {
+            btn.textContent = darkBg ? '⬛' : '⬜';
+            btn.title = darkBg ? 'Nền đen (chạm để chuyển trong suốt)' : 'Nền trong suốt (chạm để chuyển đen)';
+        }
+    }
+
+
+    function initUI() {
+        if (document.getElementById('wd-mobile-panel')) return;
+        injectStyles();
+
+        const panel = document.createElement('div');
+        panel.id = 'wd-mobile-panel';
+
+        panel.innerHTML = `
+            <div id="wd-header">
+                <div id="wd-title">Nối Từ</div>
+                <div id="wd-controls">
+                    <button id="wd-mode-toggle" class="wd-btn">Gom Từ</button>
+                    <button id="wd-bg-toggle" class="wd-btn">⬛</button>
+                    <button id="wd-auto" class="wd-btn">Auto</button>
+                    <button id="wd-clear" class="wd-btn">Xóa</button>
+                    <div id="wd-status">…</div>
+                    <button id="wd-toggle">−</button>
+                </div>
+            </div>
+            <div id="wd-body">
+                <div id="wd-body-assist">
+                    <div id="wd-original-card">
+                        <span id="wd-original-label">Từ hiện tại</span>
+                        <span id="wd-original">Chờ từ...</span>
+                    </div>
+                    <div id="wd-legend">
+                        <div class="wd-legend-item"><span class="wd-legend-dot" style="background:#4ade80;"></span>Chuỗi dài nhất</div>
+                        <div class="wd-legend-item"><span class="wd-legend-dot" style="background:#00ffcc;"></span>Số = độ dài chuỗi ước tính</div>
+                    </div>
+                    <div id="wd-suggest"></div>
+
+                    <div id="wd-ai-row">
+                        <div id="wd-ai-label">⛓ Nước nối dài nhất</div>
+                        <div id="wd-ai-best">Đang phân tích...</div>
+                        <div id="wd-ai-reason"></div>
+                        <div id="wd-ai-alt"></div>
+                    </div>
+                </div>
+                <div id="wd-body-grid" style="display:none;">
+                    <div class="wd-gt-section-label">16 Ô <span id="wd-gt-status" style="float:right;">…</span></div>
+                    <div id="wd-grid-syllables">
+                        <span class="wd-empty-msg" style="grid-column: span 4;">Đang quét...</span>
+                    </div>
+                    <div class="wd-gt-section-label">Từ ghép hợp lệ</div>
+                    <div id="wd-combo-words">
+                        <span class="wd-empty-msg">Chưa có kết quả</span>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(panel);
+        applyBgMode(panel);
+
+        const miniPanel = document.createElement('div');
+        miniPanel.id = 'wd-mini-panel';
+        miniPanel.innerHTML = `
+            <div id="wd-mini-word">...</div>
+        `;
+        document.body.appendChild(miniPanel);
+        applyBgMode(panel);
+
+        attachDrag(panel, panel.querySelector('#wd-header'));
+        attachToggle(panel, miniPanel);
+        attachBgToggle(panel);
+        attachAutoButton(panel);
+        attachClearButton(panel);
+        attachMiniPanel(miniPanel, panel);
+        attachModeToggle(panel);
+    }
+
+    // ===== Chuyển đổi giữa chế độ "Nối Từ" (trợ lý AI) và "Gom Từ" (16 ô) =====
+    function loadMode() {
+        try {
+            const v = localStorage.getItem('wd_mode');
+            return v === 'grid' ? 'grid' : 'assist';
+        } catch (e) { return 'assist'; }
+    }
+    function saveMode(mode) {
+        try { localStorage.setItem('wd_mode', mode); } catch (e) {}
+    }
+    let currentMode = loadMode();
+
+    function applyMode(panel) {
+        if (!panel) panel = document.getElementById('wd-mobile-panel');
+        if (!panel) return;
+        const bodyAssist = panel.querySelector('#wd-body-assist');
+        const bodyGrid = panel.querySelector('#wd-body-grid');
+        const titleEl = panel.querySelector('#wd-title');
+        const modeBtn = panel.querySelector('#wd-mode-toggle');
+        const isGrid = currentMode === 'grid';
+
+        if (bodyAssist) bodyAssist.style.display = isGrid ? 'none' : 'flex';
+        if (bodyGrid) bodyGrid.style.display = isGrid ? 'flex' : 'none';
+        if (titleEl) titleEl.textContent = isGrid ? 'Gom Từ' : 'Nối Từ';
+        if (modeBtn) {
+            modeBtn.textContent = isGrid ? 'Trợ Lý' : 'Gom Từ';
+            modeBtn.classList.toggle('gt-active', isGrid);
+        }
+
+        // Chỉ hiện các nút chỉ áp dụng cho chế độ Nối Từ
+        const autoBtn = panel.querySelector('#wd-auto');
+        const clearBtn = panel.querySelector('#wd-clear');
+        const statusBox = panel.querySelector('#wd-status');
+        [autoBtn, clearBtn, statusBox].forEach(el => {
+            if (el) el.style.display = isGrid ? 'none' : '';
+        });
+    }
+
+    function attachModeToggle(panel) {
+        const btn = panel.querySelector('#wd-mode-toggle');
+        applyMode(panel);
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            currentMode = currentMode === 'grid' ? 'assist' : 'grid';
+            saveMode(currentMode);
+            applyMode(panel);
+        });
+    }
+
+    // ===== Gom Từ: quét 16 ô và ghép từ 2 âm tiết =====
+    let gtLastKey = "";
+
+    function gtScan() {
+        const panel = document.getElementById('wd-mobile-panel');
+        if (!panel) return;
+
+        const allElements = document.querySelectorAll('*');
+        let detectedWords = [];
+
+        for (let el of allElements) {
+            if (el.closest('#wd-mobile-panel') || el.closest('#wd-mini-panel')) continue;
+            if (el.children.length === 0 && el.innerText) {
+                let text = el.innerText.trim();
+                text = text.replace(/[^a-zA-ZàáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđĐ]/g, '');
+
+                if (
+                    text.length >= 1 &&
+                    text.length <= 6 &&
+                    !['ĐIỂM', 'Bỏ qua', 'Rời phòng', 'Copy Link', 'Văn phòng làm việc', 'Gom Từ Online', 's', 'ế', 'ỗ', 'Ế', 'Ỗ'].includes(text)
+                ) {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+
+                    const isVisible =
+                        style.display !== 'none' &&
+                        style.visibility !== 'hidden' &&
+                        parseFloat(style.opacity) > 0 &&
+                        (typeof el.checkVisibility !== 'function' || el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+
+                    if (
+                        isVisible &&
+                        rect.width > 0 &&
+                        rect.height > 0 &&
+                        rect.top > 100 &&
+                        rect.top < window.innerHeight - 150 &&
+                        (style.borderRadius !== '0px' || parseFloat(style.fontSize) >= 14)
+                    ) {
+                        if (!detectedWords.includes(text)) detectedWords.push(text);
+                    }
+                }
+            }
+        }
+
+        detectedWords = detectedWords.slice(0, 16);
+        const currentKey = detectedWords.join(',');
+        if (detectedWords.length === 0 || currentKey === gtLastKey) return;
+        gtLastKey = currentKey;
+
+        const gridEl = document.getElementById('wd-grid-syllables');
+        if (gridEl) {
+            const slots = detectedWords.slice(0, 16);
+            while (slots.length < 16) slots.push(null);
+            gridEl.innerHTML = slots.map((w, i) => w
+                ? `<div class="wd-syllable" data-idx="${i}" data-word="${w.toLowerCase()}">${w}</div>`
+                : `<div class="wd-syllable wd-empty-tile" data-idx="${i}" data-word="">?</div>`
+            ).join('');
+        }
+
+        const comboEl = document.getElementById('wd-combo-words');
+        if (comboEl && dictReady) {
+            const combos = gtFindValidCombos(detectedWords);
+            comboEl.innerHTML = combos.length
+                ? combos.map(c => `<div class="wd-combo" data-combo="${c.toLowerCase()}">${c}</div>`).join('')
+                : '<span class="wd-empty-msg">Không tìm thấy từ ghép hợp lệ</span>';
+
+            comboEl.querySelectorAll('.wd-combo').forEach(chip => {
+                chip.addEventListener('click', () => {
+                    const parts = chip.dataset.combo.split(' ');
+                    const tiles = gridEl.querySelectorAll('.wd-syllable');
+                    tiles.forEach(t => t.classList.remove('wd-lit'));
+                    const used = new Set();
+                    parts.forEach(p => {
+                        for (const t of tiles) {
+                            if (t.dataset.word === p && !used.has(t)) {
+                                t.classList.add('wd-lit');
+                                used.add(t);
+                                break;
+                            }
+                        }
+                    });
+                });
+            });
+        }
+    }
+
+    function loadPos() {
+        try {
+            const raw = localStorage.getItem('wd_panel_pos');
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    }
+    function savePos(left, top) {
+        try { localStorage.setItem('wd_panel_pos', JSON.stringify({ left, top })); } catch (e) {}
+    }
+    function loadCollapsed() {
+        try { return localStorage.getItem('wd_panel_collapsed') === '1'; } catch (e) { return false; }
+    }
+    function saveCollapsed(on) {
+        try { localStorage.setItem('wd_panel_collapsed', on ? '1' : '0'); } catch (e) {}
+    }
+
+    let ultraMini = (function () {
+        try { return localStorage.getItem('wd_ultra_mini') === '1'; } catch (e) { return false; }
+    })();
+    function saveUltraMini(on) {
+        try { localStorage.setItem('wd_ultra_mini', on ? '1' : '0'); } catch (e) {}
+    }
+
+    function setUltraMini(on, panel, miniPanel) {
+        ultraMini = on;
+        saveUltraMini(on);
+        if (!panel) panel = document.getElementById('wd-mobile-panel');
+        if (!miniPanel) miniPanel = document.getElementById('wd-mini-panel');
+        if (!panel || !miniPanel) return;
+        panel.style.display = on ? 'none' : 'block';
+        miniPanel.classList.toggle('show', on);
+        if (on) updateMiniWord();
+    }
+
+    function updateMiniWord() {
+        const miniWordEl = document.getElementById('wd-mini-word');
+        if (!miniWordEl) return;
+
+        if (!currentBestMove || !currentBestMove.word) {
+            miniWordEl.textContent = '....';
+            miniWordEl.style.color = '#f87171';
+            return;
+        }
+
+        miniWordEl.textContent = currentBestMove.word.split(' ')[1];
+        miniWordEl.style.color = '#4ade80';
+    }
+
+    function attachToggle(panel, miniPanel) {
+        const toggleBtn = panel.querySelector('#wd-toggle');
+        const bodyEl = panel.querySelector('#wd-body');
+        let collapsed = loadCollapsed();
+        function apply() {
+            bodyEl.style.display = collapsed ? 'none' : 'block';
+            toggleBtn.textContent = collapsed ? '+' : '−';
+            saveCollapsed(collapsed);
+        }
+        apply();
+
+        let pressTimer = null;
+        let longPressed = false;
+
+        toggleBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            if (longPressed) { longPressed = false; return; }
+            collapsed = !collapsed;
+            apply();
+        });
+        toggleBtn.addEventListener('touchstart', e => {
+            e.stopPropagation();
+            longPressed = false;
+            pressTimer = setTimeout(() => {
+                longPressed = true;
+                setUltraMini(true, panel, miniPanel);
+            }, 480);
+        }, { passive: true });
+        toggleBtn.addEventListener('touchend', () => clearTimeout(pressTimer));
+        toggleBtn.addEventListener('touchmove', () => clearTimeout(pressTimer));
+        toggleBtn.addEventListener('mousedown', () => {
+            longPressed = false;
+            pressTimer = setTimeout(() => {
+                longPressed = true;
+                setUltraMini(true, panel, miniPanel);
+            }, 480);
+        });
+        toggleBtn.addEventListener('mouseup', () => clearTimeout(pressTimer));
+
+        if (ultraMini) setUltraMini(true, panel, miniPanel);
+    }
+
+    function attachMiniPanel(miniPanel, panel) {
+        let pressTimer = null;
+        let longPressed = false;
+
+        function restore() {
+            setUltraMini(false, panel, miniPanel);
+        }
+
+        miniPanel.addEventListener('touchstart', () => {
+            longPressed = false;
+            pressTimer = setTimeout(() => {
+                longPressed = true;
+                restore();
+            }, 380);
+        }, { passive: true });
+        miniPanel.addEventListener('touchend', () => clearTimeout(pressTimer));
+        miniPanel.addEventListener('touchmove', () => clearTimeout(pressTimer));
+
+        miniPanel.addEventListener('mousedown', () => {
+            longPressed = false;
+            pressTimer = setTimeout(() => {
+                longPressed = true;
+                restore();
+            }, 380);
+        });
+        miniPanel.addEventListener('mouseup', () => clearTimeout(pressTimer));
+
+        // Chạm nhanh (không giữ) vào mini panel = gửi luôn từ điểm cao nhất
+        miniPanel.addEventListener('click', () => {
+            if (longPressed) { longPressed = false; return; }
+            const bestEl = document.getElementById('wd-ai-best');
+            if (bestEl && bestEl.onclick) bestEl.onclick();
+        });
+    }
+
+    function attachBgToggle(panel) {
+        const btn = panel.querySelector('#wd-bg-toggle');
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            darkBg = !darkBg;
+            saveDarkBg(darkBg);
+            applyBgMode(panel);
+        });
+    }
+
+    function attachDrag(panel, header) {
+        const saved = loadPos();
+        if (saved && saved.left && saved.top) {
+            panel.style.setProperty('left', saved.left, 'important');
+            panel.style.setProperty('top', saved.top, 'important');
+            panel.style.setProperty('right', 'auto', 'important');
+        }
+
+        let dragging = false, ox = 0, oy = 0;
+        function start(x, y, target) {
+            if (target.closest('#wd-toggle') || target.closest('.wd-btn')) return false;
+            const rect = panel.getBoundingClientRect();
+            ox = x - rect.left;
+            oy = y - rect.top;
+            panel.style.setProperty('left', rect.left + 'px', 'important');
+            panel.style.setProperty('top', rect.top + 'px', 'important');
+            panel.style.setProperty('right', 'auto', 'important');
+            return true;
+        }
+        function move(x, y) {
+            const w = panel.offsetWidth, h = panel.offsetHeight;
+            let left = Math.max(4, Math.min(window.innerWidth - w - 4, x - ox));
+            let top = Math.max(4, Math.min(window.innerHeight - h - 4, y - oy));
+            panel.style.setProperty('left', left + 'px', 'important');
+            panel.style.setProperty('top', top + 'px', 'important');
+            savePos(panel.style.left, panel.style.top);
+        }
+        header.addEventListener('mousedown', e => { dragging = start(e.clientX, e.clientY, e.target); });
+        document.addEventListener('mousemove', e => { if (dragging) move(e.clientX, e.clientY); });
+        document.addEventListener('mouseup', () => dragging = false);
+        header.addEventListener('touchstart', e => {
+            dragging = start(e.touches[0].clientX, e.touches[0].clientY, e.target);
+        }, { passive: true });
+        panel.addEventListener('touchmove', e => {
+            if (!dragging) return;
+            move(e.touches[0].clientX, e.touches[0].clientY);
+            e.preventDefault();
+        }, { passive: false });
+        panel.addEventListener('touchend', () => dragging = false);
+    }
+
+    let autoEnabled = (function () {
+        try { return localStorage.getItem('wd_auto') === '1'; } catch (e) { return false; }
+    })();
+    function saveAuto(on) {
+        try { localStorage.setItem('wd_auto', on ? '1' : '0'); } catch (e) {}
+    }
+
+    let lastSubmitted = null;
+    let autoTimer = null;
+    const usedWords = new Set();
+    let lastSkippedWord = null;
+    let skipTimer = null;
+    let lastTrapAlertKey = null;
+
+    // Bắt trường hợp người dùng tự gõ tay và gửi (không qua fillAndSubmit)
+    function watchManualSubmit() {
+        document.addEventListener('keydown', e => {
+            if (e.key !== 'Enter') return;
+            const input = document.querySelector('input.word-link-answer-input, input[class*="word-link-answer"], input[type="text"]');
+            if (!input || e.target !== input) return;
+            const norm = resolveInputWord(input.value);
+            if (norm) {
+                usedWords.add(norm);
+                noteChainWord(norm);
+            }
+        }, true);
+
+        document.addEventListener('click', e => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            const isSubmitBtn =
+                btn.matches('button[class*="submitBtn"], button[class*="submit"]') ||
+                btn.querySelector('svg') ||
+                /gửi|submit|ok|xác nhận|gửi từ/i.test((btn.textContent || '').trim());
+            if (!isSubmitBtn) return;
+            const input = document.querySelector('input.word-link-answer-input, input[class*="word-link-answer"], input[type="text"]');
+            if (!input) return;
+            const norm = resolveInputWord(input.value);
+            if (norm) {
+                usedWords.add(norm);
+                noteChainWord(norm);
+            }
+        }, true);
+    }
+    watchManualSubmit();
+
+    function sendSkip() {
+        const skipBtn = Array.from(document.querySelectorAll('button')).find(b =>
+            /bỏ qua|skip|pass/i.test((b.textContent || '').trim())
+        );
+        if (skipBtn) {
+            skipBtn.click();
+        } else {
+            const input = document.querySelector('input.word-link-answer-input, input[class*="word-link-answer"], input[type="text"]');
+            const targets = [input, document].filter(Boolean);
+            targets.forEach(target => {
+                target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+                target.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true }));
+            });
+        }
+    }
+
+    function attachAutoButton(panel) {
+        const btn = panel.querySelector('#wd-auto');
+        function apply() {
+            btn.classList.toggle('on', autoEnabled);
+            btn.textContent = autoEnabled ? 'Tự động: Bật' : 'Tự động';
+        }
+        apply();
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            autoEnabled = !autoEnabled;
+            saveAuto(autoEnabled);
+            apply();
+            if (autoEnabled && lastText) tryAutoPlay();
+        });
+    }
+
+    // Tự sao chép từ cuối (âm tiết thứ 2) của từ gợi ý vào clipboard
+    let lastCopied = '';
+    let lastCopiedFull = '';
+    function copyLastWord(full) {
+        const last = (full || '').trim().split(/\s+/).pop();
+        if (!last) return;
+        lastCopied = last;
+        lastCopiedFull = (full || '').trim();
+        const fallback = () => {
+            try {
+                const active = document.activeElement;
+                const ta = document.createElement('textarea');
+                ta.value = last;
+                ta.setAttribute('readonly', '');
+                ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none;';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                ta.remove();
+                if (active && active.focus) active.focus();
+            } catch (e) {}
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(last).catch(fallback);
+        } else {
+            fallback();
+        }
+    }
+
+    // Chạm vào gợi ý: CHỈ copy từ cuối. Không ghi nhận vào chuỗi (chạm chỉ để xem/copy, chưa chắc đã đánh);
+    // vị trí trong chuỗi chỉ được cập nhật khi từ thật sự được gửi (hook Enter/nút gửi) hoặc hiện trên màn hình game.
+    function chooseWord(full) {
+        copyLastWord(full);
+    }
+
+    // Quy giá trị trong ô nhập về từ đầy đủ (nếu chỉ dán âm tiết cuối vừa copy thì lấy lại từ đầy đủ)
+    function resolveInputWord(value) {
+        const norm = normWord(value);
+        if (!norm) return null;
+        const n = norm.split(' ').length;
+        if (n === 2) return norm;
+        if (n === 1 && lastCopiedFull && normWord(lastCopiedFull).split(' ')[1] === norm) {
+            return normWord(lastCopiedFull);
+        }
+        return null;
+    }
+
+    function fillAndSubmit(full) {
+        lastSubmitted = full;
+        usedWords.add(full);
+        noteChainWord(full);
+        copyLastWord(full);
+        const input = document.querySelector('input.word-link-answer-input, input[class*="word-link-answer"], input[type="text"]');
+        if (!input) return;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(input, full);
+        else input.value = full;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.focus();
+
+        setTimeout(() => {
+            let sendBtn =
+                document.querySelector('button[class*="submitBtn"], button[class*="submit"]') ||
+                Array.from(document.querySelectorAll('button')).find(b =>
+                    b.querySelector('svg') ||
+                    /gửi|submit|ok|xác nhận|gửi từ/i.test((b.textContent || '').trim())
+                );
+            if (sendBtn) {
+                sendBtn.click();
+            } else {
+                ['keydown', 'keypress', 'keyup'].forEach(type => {
+                    input.dispatchEvent(new KeyboardEvent(type, {
+                        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
+                    }));
+                });
+            }
+        }, 60);
+    }
+
+    function tryAutoPlay() {
+        if (!autoEnabled) return;
+        clearTimeout(autoTimer);
+        if (!currentBestMove || !currentBestMove.word) return;
+        const full = currentBestMove.word;
+        const delay = 250 + Math.random() * 250;
+        autoTimer = setTimeout(() => {
+            if (!autoEnabled) return;
+            fillAndSubmit(full);
+        }, delay);
+    }
+
+    function attachClearButton(panel) {
+        const btn = panel.querySelector('#wd-clear');
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            usedWords.clear();
+            chainState.caught = false;
+            chainState.idx = -1;
+            chainState.pending = -1;
+            hideCatchBanner();
+            badWords.clear();
+            saveBadWords(badWords);
+            lastSkippedWord = null;
+            clearTimeout(autoTimer);
+            clearTimeout(skipTimer);
+            const statusEl = document.getElementById('wd-status');
+            if (statusEl) {
+                statusEl.textContent = 'Đã xóa';
+                statusEl.style.color = '#fbbf24';
+                setTimeout(updateDictStatus, 1200);
+            }
+            if (lastText) renderSuggestions(lastText);
+        });
+    }
+
+    function chip(full, scoreLabel, isBest) {
+        const second = full.split(' ')[1];
+        const badge = (scoreLabel !== undefined && scoreLabel !== null)
+            ? `<span class="wd-score-badge">${scoreLabel}</span>` : '';
+        const cn = chainState.caught ? chainNoOf(full) : 0;
+        const numTag = cn ? `<span style="opacity:.7;font-size:10px;margin-right:3px;">${cn}.</span>` : '';
+        const bg = isBest ? 'rgba(74,222,128,.22)' : 'rgba(0,255,204,.10)';
+        const border = isBest ? '#4ade80' : '#00ffcc';
+        return `<div class="wd-sugg" data-full="${full}"
+            style="background:${bg};border-color:${border};color:#e6fffb;">
+            ${isBest ? '⛓ ' : ''}${numTag}${second}${badge}
+        </div>`;
+    }
+
+    // ===== PHÂN TÍCH CHUỖI DÀI NHẤT (bỏ hẳn từ cụt) =====
+    // Mục tiêu: chọn nước đi mở ra chuỗi nối được NHIỀU từ nhất.
+    // Với mỗi ứng viên (đã loại từ cụt) chạy DFS tìm đường đi dài nhất trong đồ thị từ
+    // (ưu tiên nhánh ít đường ra trước — quy tắc Warnsdorff — để không tự bịt đường).
+    const CHAIN_NODE_LIMIT = 1500;  // số nút tối đa cho mỗi ứng viên
+    const CHAIN_TIME_LIMIT = 200;   // ms tối đa cho mỗi lần phân tích
+    const CHAIN_MAX_CAND = 30;      // số ứng viên tối đa được phân tích
+    const CHAIN_BRANCH = 4;         // số nhánh tối đa xét ở mỗi nút
+
+    function nextOptions(word, usedSet) {
+        const list = byFirst.get(word.split(' ')[1]);
+        if (!list) return [];
+        return list.filter(w => w !== word && !badWords.has(w) && !usedSet.has(w));
+    }
+
+    function staticDegree(word) {
+        const list = byFirst.get(word.split(' ')[1]);
+        return list ? list.length : 0;
+    }
+
+    // Độ dài chuỗi dài nhất tìm được, bắt đầu từ "start" (tính cả start)
+    function longestChain(start, usedSet, nodeLimit) {
+        const used = new Set(usedSet);
+        used.add(start);
+        let best = 1, nodes = 0;
+
+        function dfs(word, len) {
+            if (len > best) best = len;
+            if (nodes++ >= nodeLimit) return;
+            const opts = nextOptions(word, used);
+            if (!opts.length) return;
+
+            const ranked = opts
+                .map(w => { const d = staticDegree(w); return { w, k: d === 0 ? Infinity : d }; })
+                .sort((a, b) => a.k - b.k)
+                .slice(0, CHAIN_BRANCH);
+
+            for (const r of ranked) {
+                used.add(r.w);
+                dfs(r.w, len + 1);
+                used.delete(r.w);
+                if (nodes >= nodeLimit) return;
+            }
+        }
+
+        dfs(start, 1);
+        return best;
+    }
+
+    // Nhận danh sách nước đi ĐÃ loại từ cụt, trả về nước tốt nhất + bảng xếp hạng
+    function analyzeChains(candidates) {
+        const t0 = performance.now();
+        const quick = candidates
+            .map(w => ({ w, deg: nextOptions(w, usedWords).length }))
+            .sort((a, b) => b.deg - a.deg)
+            .slice(0, CHAIN_MAX_CAND);
+
+        const scored = [];
+        for (const c of quick) {
+            if (scored.length >= 6 && performance.now() - t0 > CHAIN_TIME_LIMIT) break;
+            scored.push({ w: c.w, deg: c.deg, score: longestChain(c.w, usedWords, CHAIN_NODE_LIMIT) });
+        }
+        scored.sort((a, b) => (b.score - a.score) || (b.deg - a.deg));
+
+        const top = scored[0];
+        return {
+            word: top.w,
+            kind: 'ok',
+            score: top.score,
+            reason: `⛓ Chuỗi ước tính ≥ ${top.score} từ · còn ${top.deg} đường nối · không cụt`,
+            alternatives: scored.slice(1, 4).map(s => ({ w: s.w, score: s.score })),
+            all: scored
+        };
+    }
+
+    // ===== THÔNG BÁO CỐ ĐỊNH "ĐÃ BẮT ĐƯỢC CHUỖI" =====
+    function showCatchBanner() {
+        let el = document.getElementById('wd-catch-banner');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'wd-catch-banner';
+            el.style.cssText = 'position:fixed;left:50%;bottom:calc(14px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:2147483647;pointer-events:none;background:linear-gradient(135deg,#10b981,#047857);color:#fff;font:800 13px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:9px 16px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,.45);white-space:nowrap;';
+            document.body.appendChild(el);
+        }
+        el.textContent = '✅ ĐÃ BẮT ĐƯỢC CHUỖI' + (chainState.idx >= 0
+            ? ' · ' + (chainState.idx + 1) + '. ' + CHAIN_WORDS[chainState.idx] + ' (' + (chainState.idx + 1) + '/' + CHAIN_LEN + ')'
+            : '');
+    }
+    function hideCatchBanner() {
+        const el = document.getElementById('wd-catch-banner');
+        if (el) el.remove();
+    }
+
+    // Gọi mỗi khi thấy/đánh một từ: chạm "học hành" => bắt chuỗi; sau đó theo dõi vị trí trong chuỗi
+    // Theo dõi TUẦN TỰ: chỉ tiến đúng 1 bước khi gặp từ kế tiếp (số n -> n+1).
+    // Từ chuỗi lệch thứ tự (nhảy xa / lùi) KHÔNG làm đổi số ngay; chỉ đồng bộ lại khi gặp tiếp
+    // từ liền sau nó trong chuỗi (xác nhận 2 từ liên tiếp) => số không bị nhảy lung tung.
+    function noteChainWord(w) {
+        const k = toneKey(w);
+        if (k === CHAIN_HEAD && !chainState.caught) {
+            chainState.caught = true;
+            chainState.idx = 0;
+            chainState.pending = -1;
+        } else if (chainState.caught && chainIdx.has(k)) {
+            const pos = chainIdx.get(k)[0];
+            if (pos === chainState.idx) {
+                // cùng từ được thấy lại (màn hình + gửi) => giữ nguyên số
+            } else if (pos === chainState.idx + 1) {
+                chainState.idx = pos;
+                chainState.pending = -1;
+            } else if (chainState.pending >= 0 && pos === chainState.pending + 1) {
+                chainState.idx = pos;               // 2 từ liên tiếp trong chuỗi => đồng bộ lại
+                chainState.pending = -1;
+            } else {
+                chainState.pending = pos;           // chờ xác nhận, chưa đổi số
+            }
+        }
+        if (chainState.caught) showCatchBanner();
+    }
+
+    // Khoảng cách (số từ) từ mỗi âm tiết tới âm tiết "học", chỉ đi qua từ KHÔNG thuộc chuỗi
+    function distToHead(usedSet) {
+        const dist = new Map([[CHAIN_HEAD_SYL, 0]]);
+        const q = [CHAIN_HEAD_SYL];
+        for (let h = 0; h < q.length; h++) {
+            const sy = q[h], d = dist.get(sy);
+            for (const e of (byLast.get(sy) || [])) {
+                if (dist.has(e.p)) continue;
+                if (chainDictWords.has(e.w) || badWords.has(e.w) || usedSet.has(e.w)) continue;
+                dist.set(e.p, d + 1);
+                q.push(e.p);
+            }
+        }
+        return dist;
+    }
+
+    function leadMove(base, word, reason, tag) {
+        const rest = base ? base.all.filter(x => x.w !== word) : [];
+        return {
+            word, kind: 'ok', score: tag, reason,
+            alternatives: rest.slice(0, 3).map(x => ({ w: x.w, score: x.score })),
+            all: [{ w: word, score: tag }, ...rest]
+        };
+    }
+
+    // Chọn nước đi theo 2 giai đoạn: (1) tránh chuỗi + dẫn tới "học hành"; (2) đã bắt được thì đi theo chuỗi
+    function pickMove(available, safe) {
+        if (!chainState.caught) {
+            const headWord = keyToWord.get(CHAIN_HEAD);
+            const pool = safe.filter(w => !chainDictWords.has(w));
+            if (headWord && available.includes(headWord)) {
+                return { best: leadMove(pool.length ? analyzeChains(pool) : null, headWord, '🎯 Nối vào "' + headWord + '" — bắt chuỗi!', '🎯') };
+            }
+            if (!pool.length) return { best: null, msg: 'Chỉ còn từ thuộc chuỗi — chưa được dùng (chờ tới "học hành")' };
+            const dist = distToHead(usedWords);
+            let minD = Infinity;
+            const scored = pool.map(w => {
+                const d = dist.get(toneSyl(w.split(' ')[1]));
+                const dd = d === undefined ? Infinity : d;
+                if (dd < minD) minD = dd;
+                return { w, d: dd };
+            });
+            if (minD === Infinity) {
+                const b = analyzeChains(pool);
+                b.reason = '⚠ Chưa thấy đường tới "học" · ' + b.reason;
+                return { best: b };
+            }
+            const b = analyzeChains(scored.filter(x => x.d === minD).map(x => x.w));
+            b.reason = (minD === 0 ? '🎯 Kết bằng "học" — chờ nối "học hành"' : '🎯 Dẫn tới "học hành": còn ' + minD + ' bước') + ' · tránh từ trong chuỗi';
+            return { best: b };
+        }
+        const opts = safe.filter(w => chainDictWords.has(w))
+            .map(w => ({ w, i: chainIdx.get(toneKey(w))[0] }))
+            .filter(o => o.i > chainState.idx)          // chỉ đi tiến, không lùi số
+            .sort((a, b) => a.i - b.i);                 // gần nhất (n+1) trước
+        const base = analyzeChains(safe);
+        if (opts.length) {
+            const nxt = opts[0];
+            return { best: leadMove(base, nxt.w, '⛓ ' + (nxt.i + 1) + '. ' + CHAIN_WORDS[nxt.i] + ' (' + (nxt.i + 1) + '/' + CHAIN_LEN + ')', '⛓') };
+        }
+        base.reason = '⛓ Hết đường theo chuỗi · ' + base.reason;
+        return { best: base };
+    }
+
+    let currentBestMove = null;
+
+    function updateAISuggestion(best, emptyMsg) {
+        currentBestMove = best;
+        const bestEl = document.getElementById('wd-ai-best');
+        const reasonEl = document.getElementById('wd-ai-reason');
+        const altEl = document.getElementById('wd-ai-alt');
+        if (!bestEl || !reasonEl || !altEl) return;
+
+        bestEl.style.background = '';
+        bestEl.style.padding = '';
+        bestEl.style.borderRadius = '';
+
+        if (!best) {
+            bestEl.textContent = emptyMsg || 'Không còn nước đi';
+            bestEl.style.color = '#f87171';
+            reasonEl.textContent = '';
+            altEl.innerHTML = '';
+            bestEl.onclick = null;
+            updateMiniWord();
+            return;
+        }
+
+        const second = best.word.split(' ')[1];
+        bestEl.textContent = second;
+        bestEl.style.color = '#4ade80';
+        if (lastCopied !== second) copyLastWord(best.word);
+        reasonEl.textContent = best.reason;
+
+        bestEl.onclick = () => {
+            chooseWord(best.word);
+            bestEl.style.background = 'linear-gradient(135deg,#10b981,#059669)';
+            bestEl.style.color = '#fff';
+            bestEl.style.borderRadius = '8px';
+            bestEl.style.padding = '2px 10px';
+        };
+
+        updateMiniWord();
+
+        if (best.alternatives && best.alternatives.length) {
+            altEl.innerHTML = `<span style="opacity:.6;">Khác:</span>` + best.alternatives.map(a => {
+                const w2 = a.w.split(' ')[1];
+                return `<span class="wd-ai-alt-item" data-full="${a.w}">${w2} (${a.score})</span>`;
+            }).join('');
+            altEl.querySelectorAll('.wd-ai-alt-item').forEach(el => {
+                el.onclick = () => chooseWord(el.dataset.full);
+            });
+        } else {
+            altEl.innerHTML = '';
+        }
+    }
+
+    function renderSuggestions(text) {
+        const box = document.getElementById('wd-suggest');
+        if (!box) return;
+
+        if (!dictReady) {
+            box.innerHTML = `<div class="wd-empty-msg" style="color:#fbbf24;">Đang tải kho từ...</div>`;
+            updateAISuggestion(null);
+            updateMiniWord();
+            return;
+        }
+
+        const norm = normWord(text);
+        const parts = norm.split(' ');
+        if (parts.length !== 2) {
+            box.innerHTML = `<div class="wd-empty-msg">Từ không hợp lệ (2 âm tiết)</div>`;
+            updateAISuggestion(null);
+            updateMiniWord();
+            return;
+        }
+
+        const key = parts[1];
+        const available = (byFirst.get(key) || []).filter(w => w !== norm && !badWords.has(w) && !usedWords.has(w));
+
+        if (!available.length) {
+            box.innerHTML = `<div class="wd-empty-msg" style="color:#f87171;">Hết từ nối cho "${key}"</div>`;
+            updateAISuggestion(null);
+            updateMiniWord();
+            if (lastTrapAlertKey !== norm) {
+                lastTrapAlertKey = norm;
+            }
+            if (autoEnabled && lastSkippedWord !== norm) {
+                lastSkippedWord = norm;
+                clearTimeout(skipTimer);
+                skipTimer = setTimeout(() => {
+                    if (autoEnabled && lastText && normWord(lastText) === norm) {
+                        sendSkip();
+                    }
+                }, 300 + Math.random() * 300);
+            }
+            return;
+        }
+
+        // ẨN từ cụt: không hiển thị, không gợi ý, không tự động đánh
+        const safe = available.filter(w => !isDeadEndWord(w, badWords));
+        const hidden = available.length - safe.length;
+
+        if (!safe.length) {
+            box.innerHTML = `<div class="wd-empty-msg" style="color:#fbbf24;">Chỉ còn từ cụt (đã ẩn ${hidden}) — không có nước nối tiếp</div>`;
+            updateAISuggestion(null, 'Chỉ còn từ cụt');
+            return;
+        }
+
+        const pm = pickMove(available, safe);
+        if (!pm.best) {
+            box.innerHTML = `<div class="wd-empty-msg" style="color:#fbbf24;">${pm.msg}</div>`;
+            updateAISuggestion(null, pm.msg);
+            return;
+        }
+        const best = pm.best;
+        updateAISuggestion(best);
+
+        // Chip xếp theo độ dài chuỗi giảm dần; chạm = gửi từ (không còn xem trước từ kế tiếp)
+        box.innerHTML = best.all.slice(0, 16).map((s, i) => chip(s.w, s.score, i === 0)).join('') +
+            (hidden ? `<div class="wd-empty-msg" style="width:100%;text-align:center;font-size:10px;">Đã ẩn ${hidden} từ cụt</div>` : '');
+
+        box.querySelectorAll('.wd-sugg').forEach(el => {
+            el.onclick = () => {
+                chooseWord(el.dataset.full);
+                el.style.background = 'linear-gradient(135deg,#10b981,#059669)';
+                el.style.color = '#fff';
+            };
+        });
+
+        if (autoEnabled) tryAutoPlay();
+    }
+
+    let lastText = "";
+
+    function scanWord() {
+        initUI();
+        if (chainState.caught && !document.getElementById('wd-catch-banner')) showCatchBanner();
+
+        const allTextElements = document.querySelectorAll('*');
+        let matchedText = "";
+
+        for (let el of allTextElements) {
+            if (el.closest('#wd-mobile-panel')) continue;
+            if (el.children.length === 0 && el.innerText) {
+                const text = el.innerText.trim();
+
+                if (
+                    text.length >= 2 &&
+                    !text.includes('\n') &&
+                    !['ĐIỂM', 'Đối thủ', 'Bỏ qua', 'ĐÃ NỐI', 'esc', 'Bot', 'Chơi', 'nhóm'].some(k => text.includes(k)) &&
+                    !/^\d+$/.test(text)
+                ) {
+                    const style = window.getComputedStyle(el);
+                    if (parseFloat(style.fontSize) >= 20 && el.getBoundingClientRect().height > 0) {
+                        matchedText = text;
+                    }
+                }
+            }
+        }
+
+        if (matchedText && matchedText !== lastText) {
+            lastText = matchedText;
+
+            const norm = normWord(matchedText);
+            if (norm && norm.split(' ').length === 2) {
+                usedWords.add(norm);
+                noteChainWord(norm);
+            }
+
+            const origEl = document.getElementById('wd-original');
+            if (origEl) {
+                origEl.innerText = matchedText;
+            }
+
+            renderSuggestions(matchedText);
+        }
+    }
+
+    // Công cụ Console:
+    //   wdBridge('lượng','vi')  -> tìm đường ngắn nhất "lượng ... vi" qua kho từ (bỏ qua từ đã thuộc chuỗi)
+    //   wdCheckChain()          -> liệt kê từ trong chuỗi mà kho từ KHÔNG có (để sửa)
+    window.wdBridge = function (a, b, maxLen) {
+        a = normWord(a); b = normWord(b); maxLen = maxLen || 8;
+        if (!dictReady) { console.log('Kho từ chưa tải xong, thử lại sau vài giây.'); return null; }
+        const nexts = x => [...new Set((byFirst.get(x) || []).filter(w => !chainDictWords.has(w)).map(w => w.split(' ')[1]))];
+        const dist = new Map([[a, 0]]), parents = new Map();
+        let frontier = [a];
+        for (let d = 1; d <= maxLen && frontier.length && !dist.has(b); d++) {
+            const nf = [];
+            for (const x of frontier) for (const y of nexts(x)) {
+                if (!dist.has(y)) { dist.set(y, d); parents.set(y, [x]); nf.push(y); }
+                else if (dist.get(y) === d) parents.get(y).push(x);
+            }
+            frontier = nf;
+        }
+        if (!dist.has(b)) { console.log('Không tìm thấy đường từ "' + a + '" tới "' + b + '" trong ' + maxLen + ' bước.'); return []; }
+        const out = [];
+        (function walk(y, path) {
+            if (out.length >= 15) return;
+            if (y === a) { out.push([a, ...path].join(' ')); return; }
+            for (const x of parents.get(y)) walk(x, [y, ...path]);
+        })(b, []);
+        // walk dựng ngược nên path đã đúng thứ tự: a ... b
+        console.log('Đường ngắn nhất (' + dist.get(b) + ' từ):\n' + out.join('\n'));
+        return out;
+    };
+    window.wdCheckChain = function () {
+        if (!dictReady) { console.log('Kho từ chưa tải xong.'); return null; }
+        const missing = [];
+        for (let i = 1; i < CHAIN_SYL.length; i++) {
+            const w = normWord(CHAIN_SYL[i - 1] + ' ' + CHAIN_SYL[i]);
+            if (!keyToWord.has(toneKey(w))) missing.push((i - 1) + ': ' + w);
+        }
+        console.log(missing.length ? 'Từ trong chuỗi KHÔNG có trong kho:\n' + missing.join('\n') : 'Mọi từ trong chuỗi đều có trong kho.');
+        return missing;
+    };
+
+    setTimeout(initUI, 1000);
+    loadWords();
+    setInterval(loadWords, 15000);
+    setInterval(scanWord, 200);
+    setInterval(gtScan, 300);
+    setInterval(gtUpdateStatus, 15000);
+
+    // ===== Chống bị đẩy lên khi bàn phím ảo mở =====
+    function repositionForKeyboard() {
+        if (!window.visualViewport) return;
+        const panel = document.getElementById('wd-mobile-panel');
+        const miniPanel = document.getElementById('wd-mini-panel');
+
+        const vv = window.visualViewport;
+        const offsetTop = vv.offsetTop || 0;
+
+        if (panel) {
+            panel.style.setProperty('top', (offsetTop + 8) + 'px', 'important');
+        }
+        if (miniPanel) {
+            miniPanel.style.setProperty('top', (offsetTop + 8) + 'px', 'important');
+        }
+    }
+
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', repositionForKeyboard);
+        window.visualViewport.addEventListener('scroll', repositionForKeyboard);
+    }
+    window.addEventListener('scroll', repositionForKeyboard, { passive: true });
+    setInterval(repositionForKeyboard, 300);
+})();
