@@ -1,0 +1,3078 @@
+// ==UserScript==
+// @name         Vua Nối Từ — Super Bot & Data Farming 24/7 (Noitu.fun)
+// @namespace    https://vuanoitu-huyy2.vercel.app/
+// @version      6.0.0
+// @description  Kiến trúc V6.0 Modular FSM: Bộ não Finite State Machine, IndexedDB Trie, W3C InputEvent, Log-Normal Reaction Delay (Box-Muller), BFF Gateway (Bảo vệ Firebase Quota), Dynamic Time Budgeting, Tự động tìm trận & Tự tái đấu liên tục 24/7 trên noitu.fun!
+// @author       Phạm Văn Huy (Vua Nối Từ)
+// @match        https://www.noitu.fun/*
+// @match        https://noitu.fun/*
+// @require      https://raw.githubusercontent.com/quyem0508-stack/vuanoitu/main/extension/lexicon.js
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @run-at       document-idle
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  // =========================================================================
+  // LỚP 1: ADAPTER LAYER (Userscript Polyfill & Storage Abstraction)
+  // =========================================================================
+  class VNTAdapter {
+    constructor() {
+      this.isExtension = false;
+      this.isUserscript = true;
+      this.defaultConfig = {
+        apiServer: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_server', 'https://www.vuanoitu.duckdns.org') : 'https://www.vuanoitu.duckdns.org',
+        fallbackServer: 'https://vuanoitu-huyy2.vercel.app',
+        localServer: 'http://localhost:3000',
+        autoPlay: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_autoplay', true) : true,
+        autoJoinLobby: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_auto_join', true) : true,
+        dualValidation: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_dual_val', true) : true,
+        dataFarming: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_data_farming', true) : true,
+        autoRequeue: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_auto_requeue', true) : true,
+        typingSpeedMs: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_typing_speed', 50) : 50,
+        prioritizeKillers: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_killers_only', true) : true,
+        vntApiKey: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_vnt_key', 'VNT-SUPER-BOT-2026') : 'VNT-SUPER-BOT-2026',
+      };
+      this.config = { ...this.defaultConfig };
+      this.sessionId = 'us-' + Date.now().toString(36) + '-' + Math.random().toString(36).substring(2, 6);
+      this.publicIp = this.sessionId;
+      this.machineId = this.generateDeviceLabel();
+      this.deviceName = typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_device_label', this.machineId) : this.machineId;
+    }
+
+    generateDeviceLabel() {
+      const ua = navigator.userAgent;
+      let os = 'Win';
+      if (ua.includes('Mac')) os = 'Mac';
+      else if (ua.includes('Linux')) os = 'Linux';
+      else if (ua.includes('Android')) os = 'Android';
+
+      let browser = 'Chrome';
+      if (ua.includes('Firefox')) browser = 'Firefox';
+      else if (ua.includes('Edg')) browser = 'Edge';
+
+      const hex = Math.random().toString(36).substring(2, 6).toUpperCase();
+      return `${os}-${browser}-BOT-${hex}`;
+    }
+
+    async init() {
+      try {
+        const res = await this.fetch('https://api.ipify.org?format=json');
+        const data = await res.json();
+        if (data && data.ip) this.publicIp = data.ip;
+      } catch (e) {}
+
+      this.log('INIT', `V6.0 Userscript Engine kích hoạt! Session: ${this.sessionId} | Node: ${this.deviceName} | IP: ${this.publicIp}`);
+    }
+
+    saveConfig(key, val) {
+      this.config[key] = val;
+      if (typeof GM_setValue === 'function') {
+        GM_setValue(`vuanoitu_${key}`, val);
+      }
+    }
+
+    async fetch(url, options = {}) {
+      if (typeof GM_xmlhttpRequest === 'function') {
+        return new Promise((resolve, reject) => {
+          GM_xmlhttpRequest({
+            method: options.method || 'GET',
+            url,
+            headers: options.headers || {},
+            data: options.body || undefined,
+            timeout: options.timeout || 10000,
+            onload: (res) => {
+              resolve({
+                ok: res.status >= 200 && res.status < 300,
+                status: res.status,
+                json: async () => JSON.parse(res.responseText || '{}'),
+                text: async () => res.responseText,
+              });
+            },
+            onerror: (err) => reject(err),
+            ontimeout: () => reject(new Error('GM_xmlhttpRequest timeout')),
+          });
+        });
+      }
+      return fetch(url, options);
+    }
+
+    log(module, msg, ...args) {
+      console.log(
+        `%c[VNT 6.0][${module}]%c ${msg}`,
+        'background: #09090b; color: #10b981; font-weight: bold; padding: 2px 6px; border-radius: 4px;',
+        'color: #f4f4f5; font-weight: 500;',
+        ...args
+      );
+    }
+
+    warn(module, msg, ...args) {
+      console.warn(`[VNT 6.0][${module}] ⚠️ ${msg}`, ...args);
+    }
+  }
+
+  // =========================================================================
+  // LỚP 4A: KHO TỪ ĐIỂN INDEXEDDB & IN-MEMORY TRIE (Sub-millisecond & Không Tốn RAM)
+  // =========================================================================
+  const BOOTSTRAP_KILLER_SEED = {
+    'co': ['co quắp', 'co cụm', 'co ro', 'co giãn'],
+    'đồng': ['đồng hới', 'đồng đảnh', 'đồng điu', 'đồng kẽm', 'đồng thoà', 'đồng rúp'],
+    'lở': ['lở loét', 'lở mồm', 'lở đất', 'lở miệng'],
+    'nhọn': ['nhọn hoắt', 'nhọn hoét'],
+    'nguồn': ['nguồn cội', 'nguồn gốc', 'nguồn cơn', 'nguồn sống'],
+    'cội': ['cội nguồn', 'cội rễ', 'cội cây'],
+    'nước': ['nước mắt', 'nước sôi', 'nước non', 'nước mía'],
+    'mắt': ['mắt toét', 'mắt xếch', 'mắt cá', 'mắt biếc'],
+    'dài': ['dài hoắt', 'dài ngoằng', 'dài sọc'],
+    'sâu': ['sâu hoắt', 'sâu hoắm', 'sâu thẳm'],
+    'vắng': ['vắng hoắt', 'vắng ngắt', 'vắng bẵng', 'vắng lặng'],
+    'chân': ['chân khiễng', 'chân thật', 'chân lý', 'chân quắp', 'chân khoèo', 'chân khuỵu'],
+    'già': ['già khọm', 'già nua', 'già dặn'],
+    'buồn': ['buồn rượi', 'buồn ngủ', 'buồn phiền'],
+    'bé': ['bé choắt', 'bé nhỏ', 'bé tí'],
+    'quên': ['quên bẵng', 'quên lãng'],
+    'lẻn': ['lẻn tọt', 'lẻn vào'],
+    'chui': ['chui tọt', 'chui rúc'],
+    'ngã': ['ngã ngoẹo', 'ngã ngửa', 'ngã khuỵu', 'ngã quỵ'],
+    'cong': ['cong cớn', 'cong khoằm', 'cong queo'],
+    'đỏ': ['đỏ loét', 'đỏ au', 'đỏ bừng'],
+    'chua': ['chua loét', 'chua lè'],
+    'rách': ['rách toét', 'rách toác', 'rách rưới'],
+    'vẹo': ['vẹo ngoẹo', 'vẹo sườn', 'vẹo vọ'],
+    'xiêu': ['xiêu xoẹo', 'xiêu vẹo', 'xiêu lòng'],
+    'mỏ': ['mỏ khoằm', 'mỏ neo'],
+    'mũi': ['mũi khoằm', 'mũi tên', 'mũi tàu'],
+    'ướt': ['ướt sũng', 'ướt át', 'ướt đẫm'],
+    'đẫm': ['đẫm sũng', 'đẫm lệ', 'đẫm máu'],
+    'cắn': ['cắn ngoạm', 'cắn câu', 'cắn xé'],
+    'vồ': ['vồ ngoạm', 'vồ vập', 'vồ quắp'],
+    'quay': ['quay ngoắt', 'quay cuồng', 'quay ngoẹo'],
+    'khập': ['khập khiễng'],
+    'teo': ['teo tọp', 'teo tóp'],
+    'tóp': ['tóp tọp', 'tóp tép'],
+    'gầy': ['gầy còm', 'gầy tọp', 'gầy guộc'],
+    'béo': ['béo nhẫy', 'béo múp', 'béo tốt'],
+    'mỡ': ['mỡ nhẫy', 'mỡ màng'],
+    'bóng': ['bóng nhẫy', 'bóng bẩy', 'bóng loáng'],
+    'uốn': ['uốn oằn', 'uốn lượn', 'uốn dẻo'],
+    'mệt': ['mệt uể', 'mệt mỏi', 'mệt nhoài'],
+    'lão': ['lão khọm', 'lão hóa', 'lão làng'],
+    'loạng': ['loạng choạng'],
+    'trật': ['trật trẹo', 'trật khớp'],
+    'chết': ['chết ngắc', 'chết đuối', 'chết tiệt'],
+    'yểu': ['yểu oặt', 'yểu điệu'],
+    'mềm': ['mềm oặt', 'mềm lòng', 'mềm mại'],
+    'õng': ['õng dẹo', 'õng ẹo'],
+    'dừng': ['dừng khựng', 'dừng chân', 'dừng lại'],
+    'tái': ['tái bợt', 'tái mét', 'tái sinh'],
+    'trắng': ['trắng bợt', 'trắng muốt', 'trắng tinh'],
+    'lừa': ['lừa phỉnh', 'lừa đảo', 'lừa gạt'],
+    'ngắn': ['ngắn xoẳn', 'ngắn ngủn'],
+    'cụt': ['cụt xoẳn', 'cụt hứng'],
+    'vỡ': ['vỡ toác', 'vỡ vụn', 'vỡ mộng'],
+    'lướt': ['lướt sượt', 'lướt sóng', 'lướt ván'],
+    'quẹt': ['quẹt sượt', 'quẹt diêm'],
+    'bắn': ['bắn sượt', 'bắn tỉa', 'bắn pháo'],
+    'mát': ['mát rượi', 'mát lòng', 'mát mẻ'],
+    'rầu': ['rầu rượi', 'rầu rĩ'],
+    'mắc': ['mắc ngắc', 'mắc cạn', 'mắc lừa'],
+    'nấc': ['nấc ngắc', 'nấc cục'],
+  };
+
+  class VNTIndexedDBStorage {
+    constructor(dbName = 'VNT_Lexicon_v6', storeName = 'words') {
+      this.dbName = dbName;
+      this.storeName = storeName;
+      this.db = null;
+    }
+
+    async open() {
+      if (this.db) return this.db;
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(this.dbName, 1);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains(this.storeName)) {
+            db.createObjectStore(this.storeName, { keyPath: 'starter' });
+          }
+        };
+        req.onsuccess = (e) => {
+          this.db = e.target.result;
+          resolve(this.db);
+        };
+        req.onerror = (e) => reject(e);
+      });
+    }
+
+    async getWords(starter) {
+      try {
+        const db = await this.open();
+        return new Promise((resolve) => {
+          const tx = db.transaction(this.storeName, 'readonly');
+          const store = tx.objectStore(this.storeName);
+          const req = store.get(starter);
+          req.onsuccess = () => resolve(req.result ? req.result.words : null);
+          req.onerror = () => resolve(null);
+        });
+      } catch {
+        return null;
+      }
+    }
+
+    async saveBatch(recordList) {
+      try {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction(this.storeName, 'readwrite');
+          const store = tx.objectStore(this.storeName);
+          for (const item of recordList) {
+            store.put(item);
+          }
+          tx.oncomplete = () => resolve(true);
+          tx.onerror = (e) => reject(e);
+        });
+      } catch (e) {
+        return false;
+      }
+    }
+
+    async getCount() {
+      try {
+        const db = await this.open();
+        return new Promise((resolve) => {
+          const tx = db.transaction(this.storeName, 'readonly');
+          const store = tx.objectStore(this.storeName);
+          const req = store.count();
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(0);
+        });
+      } catch {
+        return 0;
+      }
+    }
+  }
+
+  class VNTTrie {
+    constructor() {
+      this.map = new Map();
+    }
+
+    insert(phrase) {
+      if (!phrase || typeof phrase !== 'string') return;
+      const clean = phrase.trim().toLowerCase().replace(/\s+/g, ' ');
+      const parts = clean.split(' ');
+      if (parts.length !== 2) return;
+      const starter = parts[0];
+      let list = this.map.get(starter);
+      if (!list) {
+        list = [];
+        this.map.set(starter, list);
+      }
+      if (!list.includes(clean)) {
+        list.push(clean);
+      }
+    }
+
+    getWordsForStarter(starter) {
+      return this.map.get(starter) || [];
+    }
+
+    size() {
+      return this.map.size;
+    }
+  }
+
+  class VNTLexiconEngine {
+    constructor(adapter) {
+      this.adapter = adapter;
+      this.storage = new VNTIndexedDBStorage();
+      this.trie = new VNTTrie();
+      this.bannedWords = new Set(['trạng cáo', 'bin đinh']);
+      this.learnedKillers = new Map(); // phrase -> { phrase, starter, ending, source } (Priority 9999)
+      this.learnedEscapes = new Map(); // starter -> Array of escape phrases (Priority 8888)
+      this.killerEndings = [
+        'quắp', 'loét', 'hoắt', 'toét', 'bẵng', 'sượt', 'tọt', 'ngoẹo',
+        'khiễng', 'khọm', 'rượi', 'choắt', 'nghẽn', 'xoẹo', 'khoèo',
+        'khoằm', 'ngoạm', 'ngoắt', 'khuỵu', 'tọp', 'hoắm', 'sũng',
+        'huých', 'oằn', 'nhẫy', 'rọm', 'choạng', 'trẹo', 'ngắc',
+        'ngớp', 'oặt', 'dẹo', 'khựng', 'bợt', 'phỉnh', 'xoẳn',
+        'toác', 'chõng'
+      ];
+    }
+
+    async init() {
+      // 0. Nạp tức thì toàn bộ 6,680 âm tiết tiếng Việt chuẩn từ window.VNT_LEXICON nếu có sẵn
+      if (typeof window !== 'undefined' && window.VNT_LEXICON) {
+        let loadedLex = 0;
+        for (const [starter, endings] of Object.entries(window.VNT_LEXICON)) {
+          if (Array.isArray(endings)) {
+            for (const end of endings) {
+              this.trie.insert(`${starter} ${end}`);
+              loadedLex++;
+            }
+          }
+        }
+        this.adapter.log('LEXICON', `Đã nạp tức thì ${loadedLex} từ tiếng Việt từ VNT_LEXICON vào Trie!`);
+      }
+
+      // 1. Nạp seed ban đầu tức thì (<1ms)
+      for (const [starter, phrases] of Object.entries(BOOTSTRAP_KILLER_SEED)) {
+        for (const p of phrases) this.trie.insert(p);
+      }
+
+      // Khôi phục từ localStorage các từ đã học từ đối thủ Noitu.fun
+      try {
+        const savedKillers = JSON.parse(localStorage.getItem('VNT_LEARNED_KILLERS') || '[]');
+        if (Array.isArray(savedKillers)) {
+          const validKillers = [];
+          for (const k of savedKillers) {
+            if (k && k.phrase) {
+              const p = k.phrase.trim().toLowerCase();
+              if (p === 'đồng thau') continue;
+              const ending = p.split(/\s+/).pop();
+              if (this.killerEndings.includes(ending)) {
+                this.learnedKillers.set(k.phrase, k);
+                this.trie.insert(k.phrase);
+                validKillers.push(k);
+              }
+            }
+          }
+          if (validKillers.length !== savedKillers.length) {
+            localStorage.setItem('VNT_LEARNED_KILLERS', JSON.stringify(validKillers));
+          }
+        }
+        const savedEscapes = JSON.parse(localStorage.getItem('VNT_LEARNED_ESCAPES') || '[]');
+        if (Array.isArray(savedEscapes)) {
+          for (const esc of savedEscapes) {
+            if (esc && esc.starter && esc.word) {
+              const list = this.learnedEscapes.get(esc.starter) || [];
+              if (!list.includes(esc.word)) list.push(esc.word);
+              this.learnedEscapes.set(esc.starter, list);
+              this.trie.insert(esc.word);
+            }
+          }
+        }
+        const savedBanned = JSON.parse(localStorage.getItem('VNT_BANNED_WORDS') || '[]');
+        if (Array.isArray(savedBanned)) {
+          for (const b of savedBanned) this.bannedWords.add(b);
+        }
+      } catch (e) {}
+
+      // Đồng bộ tri thức học từ server nếu có và duy trì cập nhật mỗi 10s
+      this.syncLearnedKnowledgeFromServer();
+      setInterval(() => {
+        this.syncLearnedKnowledgeFromServer();
+      }, 10000);
+
+      // 2. Nạp IndexedDB ngầm
+      setTimeout(async () => {
+        try {
+          const count = await this.storage.getCount();
+          if (count > 200) {
+            this.adapter.log('LEXICON', `IndexedDB đã có ${count} âm tiết. Đang nạp vào Trie...`);
+            const db = await this.storage.open();
+            const tx = db.transaction(this.storage.storeName, 'readonly');
+            const req = tx.objectStore(this.storage.storeName).openCursor();
+            req.onsuccess = (e) => {
+              const cursor = e.target.result;
+              if (cursor) {
+                const words = cursor.value.words || [];
+                for (const w of words) this.trie.insert(w);
+                cursor.continue();
+              } else {
+                this.adapter.log('LEXICON', `Trie nạp hoàn tất! Tổng cộng: ${this.trie.size()} âm tiết.`);
+              }
+            };
+          } else {
+            this.syncDictionaryFromServer();
+          }
+        } catch (e) {
+          this.adapter.warn('LEXICON', 'Lỗi nạp IndexedDB:', e);
+        }
+      }, 100);
+    }
+
+    async syncDictionaryFromServer() {
+      const urls = [
+        `${this.adapter.config.apiServer}/full_dictionary.json`,
+        `${this.adapter.config.fallbackServer}/full_dictionary.json`,
+        'https://vuanoitu-huyy2.vercel.app/full_dictionary.json',
+        'https://raw.githubusercontent.com/quyem0508-stack/vuanoitu/main/public/full_dictionary.json',
+      ];
+
+      for (const url of urls) {
+        try {
+          this.adapter.log('LEXICON', `Đang tải full_dictionary.json từ: ${url}...`);
+          const res = await (typeof this.adapter.fetch === 'function' ? this.adapter.fetch(url) : fetch(url));
+          if (!res.ok) continue;
+          const list = await res.json();
+          if (!Array.isArray(list) || list.length === 0) continue;
+
+          const grouped = new Map();
+          for (const raw of list) {
+            if (typeof raw !== 'string') continue;
+            const clean = raw.trim().toLowerCase().replace(/\s+/g, ' ');
+            const parts = clean.split(' ');
+            if (parts.length === 2) {
+              this.trie.insert(clean);
+              let arr = grouped.get(parts[0]);
+              if (!arr) {
+                arr = [];
+                grouped.set(parts[0], arr);
+              }
+              if (!arr.includes(clean)) arr.push(clean);
+            }
+          }
+
+          const batch = [];
+          grouped.forEach((words, starter) => {
+            batch.push({ starter, words });
+          });
+          await this.storage.saveBatch(batch);
+          this.adapter.log('LEXICON', `Đã đồng bộ & cache ${batch.length} âm tiết (${list.length} từ) vào IndexedDB!`);
+          break;
+        } catch (e) {}
+      }
+    }
+
+    async syncLearnedKnowledgeFromServer() {
+      const servers = [
+        this.adapter.config.apiServer,
+        this.adapter.config.fallbackServer,
+        'https://vuanoitu-huyy2.vercel.app',
+        this.adapter.config.localServer,
+      ].filter(Boolean);
+
+      const fetchFn = typeof this.adapter.fetch === 'function' ? this.adapter.fetch.bind(this.adapter) : fetch;
+
+      for (const s of servers) {
+        try {
+          const res = await fetchFn(`${s}/api/bot/learned-knowledge`);
+          if (!res.ok) continue;
+          const data = await res.json();
+          const knowledge = data?.knowledge || {
+            newKillers: data?.killers || data?.newKillers || [],
+            newEscapes: data?.escapes || data?.newEscapes || [],
+            bannedWords: data?.bannedWords || [],
+            customWords: data?.customWords || [],
+          };
+          if (knowledge && ((knowledge.newKillers && knowledge.newKillers.length > 0) || (knowledge.newEscapes && knowledge.newEscapes.length > 0) || (knowledge.bannedWords && knowledge.bannedWords.length > 0) || (knowledge.customWords && knowledge.customWords.length > 0))) {
+            this.importMinedKnowledge(knowledge, true);
+            this.adapter.log('LEXICON', `Đã đồng bộ tri thức từ Server (${s}): ${knowledge.newKillers?.length || 0} killers, ${knowledge.newEscapes?.length || 0} escapes, ${knowledge.customWords?.length || 0} custom, ${knowledge.bannedWords?.length || 0} banned.`);
+            const kEl = document.getElementById('vnt-stat-learned-killers');
+            if (kEl) kEl.textContent = `${this.learnedKillers.size}`;
+            let escCount = 0;
+            if (this.learnedEscapes) {
+              this.learnedEscapes.forEach((arr) => { escCount += (arr?.length || 0); });
+            }
+            const eEl = document.getElementById('vnt-stat-learned-escapes');
+            if (eEl) eEl.textContent = `${escCount}`;
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+
+    importMinedKnowledge(mined, saveToStorage = true) {
+      if (!mined) return { addedKillers: 0, addedEscapes: 0, addedBanned: 0 };
+      let addedKillers = 0;
+      let addedEscapes = 0;
+      let addedBanned = 0;
+
+      // 1. Killers (Priority 9999) - Sát thủ đối thủ từng hạ gục mình
+      const killersList = mined.newKillers || mined.killers;
+      if (Array.isArray(killersList)) {
+        for (const k of killersList) {
+          if (!k || !(k.phrase || k.word)) continue;
+          const phrase = (k.phrase || k.word).trim().toLowerCase();
+          if (this.bannedWords.has(phrase) || phrase === 'đồng thau') continue;
+          const ending = k.ending || phrase.split(' ')[1];
+          if (!this.killerEndings.includes(ending)) continue;
+          if (!this.learnedKillers.has(phrase)) {
+            this.learnedKillers.set(phrase, {
+              phrase,
+              ending,
+              sourceOpponent: k.sourceOpponent || 'noitu.fun'
+            });
+            this.trie.insert(phrase);
+            addedKillers++;
+          }
+        }
+        if (saveToStorage) {
+          try {
+            const arr = Array.from(this.learnedKillers.values());
+            localStorage.setItem('VNT_LEARNED_KILLERS', JSON.stringify(arr));
+          } catch (e) {}
+        }
+      }
+
+      // 2. Escapes (Priority 8888) - Đối thủ từng giải thành công âm này
+      const escapesList = mined.newEscapes || mined.escapes;
+      if (Array.isArray(escapesList)) {
+        for (const esc of escapesList) {
+          if (!esc || !(esc.word || esc.phrase)) continue;
+          const word = (esc.word || esc.phrase).trim().toLowerCase();
+          const starter = (esc.starter || word.split(' ')[0] || '').trim().toLowerCase();
+          if (!starter || this.bannedWords.has(word)) continue;
+          let list = this.learnedEscapes.get(starter);
+          if (!list) {
+            list = [];
+            this.learnedEscapes.set(starter, list);
+          }
+          if (!list.includes(word)) {
+            list.push(word);
+            this.trie.insert(word);
+            addedEscapes++;
+          }
+        }
+        if (saveToStorage) {
+          try {
+            const flat = [];
+            this.learnedEscapes.forEach((words, starter) => {
+              for (const w of words) flat.push({ starter, word: w, resolvedSyllable: starter });
+            });
+            localStorage.setItem('VNT_LEARNED_ESCAPES', JSON.stringify(flat));
+          } catch (e) {}
+        }
+      }
+
+      // 3. Banned words - Từ tự sát bị lỗi/trừ tim
+      if (Array.isArray(mined.bannedWords)) {
+        for (const b of mined.bannedWords) {
+          if (!b) continue;
+          const clean = b.trim().toLowerCase();
+          if (!this.bannedWords.has(clean)) {
+            this.bannedWords.add(clean);
+            this.learnedKillers.delete(clean);
+            addedBanned++;
+          }
+        }
+        if (saveToStorage) {
+          try {
+            localStorage.setItem('VNT_BANNED_WORDS', JSON.stringify(Array.from(this.bannedWords)));
+          } catch (e) {}
+        }
+      }
+
+      return { addedKillers, addedEscapes, addedBanned };
+    }
+
+    getCandidates(starter, usedWords = new Set()) {
+      const killers = [];
+      const strategicMoves = [];
+      const escapes = [];
+      const safes = [];
+      const seen = new Set();
+
+      // [ƯU TIÊN 1 - PRIORITY 9999]: ĐÒN SÁT THỦ KẾT LIỄU ĐỐI THỦ TỪNG DÙNG (Gậy Ông Đập Lưng Ông)
+      if (this.learnedKillers && this.learnedKillers.size > 0) {
+        this.learnedKillers.forEach((kData, phrase) => {
+          if (this.bannedWords.has(phrase)) return;
+          if (usedWords && usedWords.has(phrase)) return;
+          const parts = phrase.split(' ');
+          if (parts[0] === starter) {
+            killers.push(phrase);
+            seen.add(phrase);
+          }
+        });
+      }
+
+      // [ƯU TIÊN 2 - PRIORITY 8888]: ĐÒN HÓA GIẢI THẾ BÍ (ESCAPES TỪ ĐỐI THỦ NOITU.FUN)
+      const learnedEsc = this.learnedEscapes.get(starter);
+      if (learnedEsc && Array.isArray(learnedEsc)) {
+        for (const escWord of learnedEsc) {
+          if (this.bannedWords.has(escWord)) continue;
+          if (usedWords && usedWords.has(escWord)) continue;
+          if (!seen.has(escWord)) {
+            escapes.push(escWord);
+            seen.add(escWord);
+          }
+        }
+      }
+
+      // [ƯU TIÊN 3]: KHO TỪ ĐIỂN TRIE CHUẨN & TRA CỨU TỨC THỜI TỪ VNT_LEXICON (6,680 ÂM TIẾT)
+      let fromTrie = this.trie.getWordsForStarter(starter);
+
+      // Nếu Trie chưa nạp kịp âm tiết này, tra cứu trực tiếp từ window.VNT_LEXICON
+      if (fromTrie.length === 0 && typeof window !== 'undefined' && window.VNT_LEXICON && window.VNT_LEXICON[starter]) {
+        const rawList = window.VNT_LEXICON[starter];
+        if (Array.isArray(rawList)) {
+          for (const end of rawList) {
+            const p = `${starter} ${end}`;
+            if (!this.bannedWords.has(p) && (!usedWords || !usedWords.has(p))) {
+              fromTrie.push(p);
+              this.trie.insert(p);
+            }
+          }
+        }
+      }
+
+      for (const phrase of fromTrie) {
+        if (seen.has(phrase)) continue;
+        if (this.bannedWords.has(phrase)) continue;
+        if (usedWords && usedWords.has(phrase)) continue;
+        seen.add(phrase);
+
+        const parts = phrase.split(' ');
+        if (parts.length !== 2) continue;
+        const secondSyllable = parts[1];
+
+        // 1. Kiểm tra nếu là âm đuôi chiếu bí tuyệt đối (0 từ nối)
+        if (this.killerEndings.includes(secondSyllable)) {
+          killers.push(phrase);
+          continue;
+        }
+
+        // 2. Phân tích Lookahead: Đếm xem đối thủ có bao nhiêu từ để nối tiếp từ âm tiết này
+        const opponentNextOptions = this.trie.getWordsForStarter(secondSyllable).filter(
+          (w) => !this.bannedWords.has(w) && (!usedWords || !usedWords.has(w))
+        );
+        const nextCount = opponentNextOptions.length;
+
+        if (nextCount <= 2) {
+          strategicMoves.push({ phrase, nextCount });
+        } else {
+          safes.push({ phrase, nextCount });
+        }
+      }
+
+      // Sắp xếp các nước đi bẫy và an toàn: Ưu tiên dồn đối thủ vào thế ít đường lui nhất
+      strategicMoves.sort((a, b) => a.nextCount - b.nextCount);
+      safes.sort((a, b) => a.nextCount - b.nextCount);
+
+      const allSafes = [
+        ...escapes,
+        ...strategicMoves.map((x) => x.phrase),
+        ...safes.map((x) => x.phrase),
+      ];
+
+      const bestSafe = escapes[0] || strategicMoves[0]?.phrase || allSafes[0] || killers[0] || null;
+
+      return {
+        killers,
+        safes: allSafes,
+        escapes,
+        killer1: killers[0] || strategicMoves[0]?.phrase || escapes[0] || allSafes[0] || null,
+        killer2: killers[1] || strategicMoves[1]?.phrase || escapes[1] || allSafes[1] || killers[0] || null,
+        safeMove: bestSafe,
+      };
+    }
+
+    banWord(word) {
+      if (!word) return;
+      const clean = word.trim().toLowerCase();
+      this.bannedWords.add(clean);
+      this.learnedKillers.delete(clean);
+      try {
+        localStorage.setItem('VNT_BANNED_WORDS', JSON.stringify(Array.from(this.bannedWords)));
+      } catch (e) {}
+    }
+
+    parseMaskPattern(rawPattern) {
+      if (!rawPattern || !rawPattern.trim()) return [];
+      let cleaned = rawPattern
+        .normalize('NFC')
+        .toLowerCase()
+        .replace(/[?*•–—.]/g, '_')
+        .trim();
+
+      if (/\s{2,}|[\/|,]/.test(cleaned)) {
+        return cleaned
+          .split(/(?:\s{2,}|[\/|,])+/)
+          .map((g) => g.replace(/\s+/g, ''))
+          .filter(Boolean);
+      }
+
+      const tokens = cleaned.split(/\s+/).filter(Boolean);
+      if (tokens.length === 0) return [];
+      if (tokens.every((t) => [...t].length >= 2)) {
+        return tokens;
+      }
+
+      const syllables = [];
+      let current = '';
+      for (const token of tokens) {
+        for (const ch of [...token]) {
+          if (ch === '_') {
+            current += '_';
+          } else {
+            if (current.includes('_')) {
+              syllables.push(current);
+              current = ch;
+            } else {
+              current += ch;
+            }
+          }
+        }
+      }
+      if (current) syllables.push(current);
+      return syllables;
+    }
+
+    solveMaskedWord(maskPattern, definitionHint = '', usedWords = new Set()) {
+      const syllableMasks = this.parseMaskPattern(maskPattern);
+      if (syllableMasks.length === 0) return { bestMove: null, candidates: [], syllableMasks: [] };
+
+      const stripAccent = (c) =>
+        c.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase();
+
+      const maskArrays = syllableMasks.map((m) => [...m.normalize('NFC')]);
+      const maskBaseArrays = maskArrays.map((arr) => arr.map((c) => (c === '_' ? '_' : stripAccent(c))));
+
+      const stopWords = new Set([
+        'động', 'danh', 'tính', 'phó', 'đại', 'từ', 'làm', 'cho', 'của', 'và', 'với',
+        'các', 'những', 'một', 'hai', 'ba', 'có', 'được', 'bị', 'trong', 'ngoài',
+        'trên', 'dưới', 'người', 'vật', 'việc', 'nói', 'khái', 'quát', 'như', 'hoặc',
+        'hay', 'rất', 'thật', 'quá', 'lắm', 'bằng', 'để', 'đến', 'tới', 'ra', 'vào',
+        'lên', 'xuống', 'đi', 'lại', 'theo', 'về', 'tại', 'do', 'bởi', 'vì', 'nên',
+        'mà', 'thì', 'là', 'ở', 'cũng', 'vẫn', 'đã', 'đang', 'sẽ', 'không', 'chẳng'
+      ]);
+
+      const normalizedHint = (definitionHint || '').normalize('NFC').toLowerCase().trim();
+      const hintTokens = normalizedHint
+        ? normalizedHint.replace(/[0-9()[\]{}.,;:!?"'“”‘’\-–—/\\]/g, ' ').split(/\s+/).filter((w) => w.length >= 2)
+        : [];
+      const hintKeywords = Array.from(new Set(hintTokens.filter((w) => !stopWords.has(w))));
+      const hintTokenSet = new Set(hintTokens);
+
+      const hasCompound = (w1, w2) => {
+        const phrase = `${w1} ${w2}`;
+        const list = this.trie.getWordsForStarter(w1);
+        if (list && list.includes(phrase)) return true;
+        if (typeof window !== 'undefined' && window.VNT_LEXICON && Array.isArray(window.VNT_LEXICON[w1])) {
+          return window.VNT_LEXICON[w1].includes(w2);
+        }
+        return false;
+      };
+
+      const allStarters = new Set(this.trie.starters.keys());
+      if (typeof window !== 'undefined' && window.VNT_LEXICON) {
+        for (const k of Object.keys(window.VNT_LEXICON)) {
+          allStarters.add(k);
+        }
+      }
+
+      const scored = [];
+      const seen = new Set();
+
+      for (const starter of allStarters) {
+        const s1Chars = [...starter.normalize('NFC')];
+        if (s1Chars.length !== maskArrays[0].length) continue;
+
+        let s1Match = true;
+        let s1Exact = 0;
+        let s1Base = 0;
+        for (let j = 0; j < maskArrays[0].length; j++) {
+          const mc = maskArrays[0][j];
+          if (mc === '_') continue;
+          if (s1Chars[j] === mc) {
+            s1Exact++;
+          } else if (mc === maskBaseArrays[0][j] && stripAccent(s1Chars[j]) === maskBaseArrays[0][j]) {
+            s1Base++;
+          } else {
+            s1Match = false;
+            break;
+          }
+        }
+        if (!s1Match) continue;
+
+        let wordList = this.trie.getWordsForStarter(starter).slice();
+        if (typeof window !== 'undefined' && window.VNT_LEXICON && Array.isArray(window.VNT_LEXICON[starter])) {
+          for (const end of window.VNT_LEXICON[starter]) {
+            wordList.push(`${starter} ${end}`);
+          }
+        }
+
+        for (const phrase of wordList) {
+          if (seen.has(phrase)) continue;
+          seen.add(phrase);
+          if (this.bannedWords.has(phrase)) continue;
+          if (usedWords && usedWords.has(phrase)) continue;
+
+          const syls = phrase.split(' ');
+          if (syls.length !== maskArrays.length) continue;
+
+          let matched = true;
+          let exactCount = s1Exact;
+          let baseCount = s1Base;
+
+          for (let i = 1; i < syls.length; i++) {
+            const scArr = [...syls[i].normalize('NFC')];
+            const mcArr = maskArrays[i];
+            const mbArr = maskBaseArrays[i];
+            if (scArr.length !== mcArr.length) {
+              matched = false;
+              break;
+            }
+            for (let j = 0; j < mcArr.length; j++) {
+              if (mcArr[j] === '_') continue;
+              if (scArr[j] === mcArr[j]) {
+                exactCount++;
+              } else if (mcArr[j] === mbArr[j] && stripAccent(scArr[j]) === mbArr[j]) {
+                baseCount++;
+              } else {
+                matched = false;
+                break;
+              }
+            }
+            if (!matched) break;
+          }
+
+          if (!matched) continue;
+
+          let score = exactCount * 60 + baseCount * 20;
+          score += Math.min(40, Math.round(Math.sqrt(wordList.length) * 2));
+
+          if (normalizedHint) {
+            const genericParticles = new Set(['thế', 'rồi', 'nữa', 'lắm', 'quá', 'hết', 'xong', 'luôn', 'ngay', 'mãi', 'hoài']);
+            for (const syl of syls) {
+              if (hintTokenSet.has(syl) && !stopWords.has(syl)) {
+                score += 1200;
+                if (normalizedHint.includes(` ${syl}`) && normalizedHint.includes('như ')) {
+                  score += 600;
+                }
+              }
+              if (genericParticles.has(syl)) continue;
+              let sylBridgeCount = 0;
+              for (const kw of hintKeywords) {
+                if (kw === syl || genericParticles.has(kw)) continue;
+                if (hasCompound(syl, kw)) {
+                  sylBridgeCount++;
+                  if (sylBridgeCount <= 5) score += 220;
+                }
+                if (hasCompound(kw, syl)) {
+                  sylBridgeCount++;
+                  if (sylBridgeCount <= 5) score += 220;
+                }
+              }
+            }
+          }
+
+          scored.push({ word: phrase, score });
+        }
+      }
+
+      scored.sort((a, b) => b.score - a.score || a.word.localeCompare(b.word, 'vi'));
+      const candidates = scored.slice(0, 25).map((s) => s.word);
+      return {
+        bestMove: candidates[0] || null,
+        candidates,
+        syllableMasks,
+      };
+    }
+  }
+
+  // =========================================================================
+  // LỚP 3: INPUT & HUMANIZER ENGINE (W3C InputEvent + Log-Normal Delay)
+  // Bỏ hoàn toàn execCommand và không còn phụ thuộc __reactProps$
+  // =========================================================================
+  class VNTInputHumanizer {
+    constructor(adapter) {
+      this.adapter = adapter;
+    }
+
+    // Phân phối Log-Normal / Gauss qua Box-Muller Transform
+    getHumanReactionDelay(baseMs = 1500, variance = 350) {
+      const u1 = Math.max(1e-6, Math.random());
+      const u2 = Math.random();
+      const randStdNormal = Math.sqrt(-2.0 * Math.log(u1)) * Math.sin(2.0 * Math.PI * u2);
+      const delay = Math.round(baseMs + randStdNormal * variance);
+      return Math.max(800, Math.min(delay, 3200)); // Clamp an toàn 0.8s - 3.2s
+    }
+
+    // Chuẩn hóa W3C & React 18: set native value + reset value tracker + InputEvent + ChangeEvent
+    dispatchNativeInput(inputEl, text) {
+      if (!inputEl) return;
+      const tracker = inputEl._valueTracker;
+      if (tracker) {
+        tracker.setValue('');
+      }
+
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      if (nativeSetter) {
+        nativeSetter.call(inputEl, text);
+      } else {
+        inputEl.value = text;
+      }
+
+      const inputEvent = new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: text,
+      });
+      inputEl.dispatchEvent(inputEvent);
+      inputEl.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      inputEl.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    }
+
+    // Nhấp chuột đa tầng hỗ trợ React 18 Synthetic Events & Fiber onClick
+    triggerButtonClick(btn) {
+      if (!btn || btn.disabled) return false;
+      const opts = { bubbles: true, cancelable: true, view: window };
+      btn.dispatchEvent(new PointerEvent('pointerdown', opts));
+      btn.dispatchEvent(new MouseEvent('mousedown', opts));
+      btn.dispatchEvent(new PointerEvent('pointerup', opts));
+      btn.dispatchEvent(new MouseEvent('mouseup', opts));
+      btn.click();
+
+      const reactKey = Object.keys(btn).find((k) => k.startsWith('__reactProps$') || k.startsWith('__reactEvents$'));
+      if (reactKey && btn[reactKey]?.onClick) {
+        try {
+          btn[reactKey].onClick({ preventDefault: () => {}, stopPropagation: () => {} });
+        } catch (e) {}
+      }
+      return true;
+    }
+
+    // Gửi phím Enter theo chuẩn DOM và React Event Handler
+    triggerEnter(inputEl) {
+      if (!inputEl) return;
+      const enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+      inputEl.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+      inputEl.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+      inputEl.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+
+      const reactKey = Object.keys(inputEl).find((k) => k.startsWith('__reactProps$') || k.startsWith('__reactEvents$'));
+      if (reactKey && inputEl[reactKey]?.onKeyDown) {
+        try {
+          inputEl[reactKey].onKeyDown({ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, preventDefault: () => {}, stopPropagation: () => {} });
+        } catch (e) {}
+      }
+    }
+
+    // Mô phỏng gõ người thật với keystroke jitter & submit đa tầng
+    async simulateTyping(inputEl, prefix, targetSecondWord, typingSpeedMs = 50) {
+      if (!inputEl) return;
+      inputEl.focus();
+
+      const cleanPrefix = (prefix || '').trim();
+      const basePrefix = cleanPrefix ? `${cleanPrefix} ` : '';
+      this.dispatchNativeInput(inputEl, basePrefix);
+      await new Promise((r) => setTimeout(r, basePrefix ? 60 : 30));
+
+      let currentVal = basePrefix;
+      const chars = targetSecondWord.split('');
+
+      for (let i = 0; i < chars.length; i++) {
+        currentVal += chars[i];
+        this.dispatchNativeInput(inputEl, currentVal);
+
+        const jitter = Math.round((Math.random() - 0.5) * 25);
+        const delay = Math.max(30, typingSpeedMs + jitter);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+
+      // Đảm bảo giá trị cuối cùng được gán chuẩn xác
+      this.dispatchNativeInput(inputEl, currentVal);
+      await new Promise((r) => setTimeout(r, 80));
+
+      // 1. Gửi phím Enter (KeyboardEvent hoàn chỉnh)
+      this.triggerEnter(inputEl);
+
+      // 2. Tìm nút Gửi (Nút submit/send của Noitu.fun)
+      const submitBtn = inputEl.parentElement?.querySelector('button') ||
+                        inputEl.closest('div')?.querySelector('button') ||
+                        inputEl.closest('form')?.querySelector('button') ||
+                        document.querySelector('button[aria-label*="Gửi"], button[aria-label*="gửi"]') ||
+                        document.querySelector('button[class*="word-link-answer-input_btn"]') ||
+                        document.querySelector('button[class*="submitBtn"]') ||
+                        document.querySelector('button[type="submit"]');
+
+      if (submitBtn && !submitBtn.disabled) {
+        this.triggerButtonClick(submitBtn);
+      }
+
+      // 3. Fallback form requestSubmit
+      try {
+        inputEl.closest('form')?.requestSubmit?.();
+      } catch (e) {}
+
+      // 4. Kiểm tra lại sau 150ms: Nếu từ vẫn kẹt trong ô nhập thì nhấp lại
+      await new Promise((r) => setTimeout(r, 150));
+      if (inputEl.value && inputEl.value.trim().toLowerCase() === currentVal.trim().toLowerCase()) {
+        if (submitBtn && !submitBtn.disabled) {
+          this.triggerButtonClick(submitBtn);
+        }
+        this.triggerEnter(inputEl);
+      }
+    }
+  }
+
+  // =========================================================================
+  // BỘ ĐỊNH DẠNG BÁO CÁO VÁN ĐẤU & TỰ ĐỘNG TẢI VỀ MÁY CHO USERSCRIPT
+  // =========================================================================
+  function triggerDownloadTxt(filename, content) {
+    try {
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) {
+      console.warn('Lỗi download file:', e);
+    }
+  }
+
+  function detectMatchOutcome(container = document.body, lastActivePlayer = 'opponent', matchContext = null) {
+    const modal = document.querySelector('[class*="game-result-modal"], [class*="result-modal"]');
+
+    // 1. Nếu có modal kết quả trận đấu hiển thị trên màn hình:
+    if (modal) {
+      const modalText = (modal.innerText || modal.textContent || '').toLowerCase();
+      const modalHtml = modal.innerHTML.toLowerCase();
+      const titleEl = modal.querySelector('h1, h2, h3, h4, [class*="title"], [class*="header"], [class*="result"]');
+      const titleText = (titleEl ? (titleEl.textContent || '') : '').toLowerCase();
+
+      // Kiểm tra Thất Bại trước (Tránh dính chữ "chiến thắng" trong bảng thống kê)
+      if (
+        titleText.includes('thất bại') || titleText.includes('thua') || titleText.includes('defeat') ||
+        modalText.includes('thất bại') || modalText.includes('bạn thua') || modalText.includes('bạn bị xử thua') || modalText.includes('thua cuộc') ||
+        modalHtml.includes('game-result-modal_lose') || modalHtml.includes('resultmodal_lose') || modalHtml.includes('defeat') || modalHtml.includes('skull') ||
+        (modalText.includes('-') && (modalText.includes('elo') || modalText.includes('điểm')))
+      ) {
+        return { result: 'DEFEAT', reason: 'Modal hiển thị Thất Bại (Bị trừ điểm / Hết giờ / Đối thủ hạ gục)' };
+      }
+
+      // Kiểm tra Chiến Thắng:
+      if (
+        titleText.includes('chiến thắng') || titleText.includes('thắng') || titleText.includes('victory') ||
+        modalText.includes('chiến thắng') || modalText.includes('bạn thắng') || modalText.includes('thắng cuộc') || modalText.includes('đối thủ đã rời') || modalText.includes('đối thủ đã thoát') ||
+        modalHtml.includes('game-result-modal_win') || modalHtml.includes('resultmodal_win') || modalHtml.includes('victory') || modalHtml.includes('trophy') || modalHtml.includes('crown') ||
+        (modalText.includes('+') && (modalText.includes('elo') || modalText.includes('điểm')))
+      ) {
+        return { result: 'VICTORY', reason: 'Modal hiển thị Chiến Thắng' };
+      }
+    }
+
+    // 2. Logic xác thực theo dữ liệu lượt đi thực tế (Deterministic Turn Telemetry)
+    if (matchContext) {
+      const allMoves = matchContext.allMoves || [];
+      const turnLogs = matchContext.turnLogs || [];
+
+      // Kiểm tra turnLogs: nếu lượt cuối cùng bot không trả lời được từ của đối thủ -> Chắc chắn Thua!
+      if (turnLogs.length > 0) {
+        const lastTurn = turnLogs[turnLogs.length - 1];
+        if (!lastTurn.botResponse || lastTurn.botResponse === '—' || lastTurn.botResponse.trim() === '') {
+          return { result: 'DEFEAT', reason: `Bí từ trước đòn "${lastTurn.opponentWord}" của đối thủ (Bot không đưa ra được từ nối)` };
+        }
+      }
+
+      // Kiểm tra allMoves: ai là người nối được từ hợp lệ cuối cùng?
+      if (allMoves.length > 0) {
+        const lastMove = allMoves[allMoves.length - 1];
+        if (lastMove.side && (lastMove.side.includes('Bot') || lastMove.side.includes('bot'))) {
+          return { result: 'VICTORY', reason: `Bot đã nối thành công từ cuối "${lastMove.word}", đối thủ không thể phản đòn` };
+        }
+        if (lastMove.side && (lastMove.side.includes('Đối thủ') || lastMove.side.includes('opponent'))) {
+          return { result: 'DEFEAT', reason: `Đối thủ ra đòn "${lastMove.word}", Bot không trả lời được` };
+        }
+      }
+
+      if (matchContext.botTurnCount === 0 && matchContext.lastOpponentWord) {
+        return { result: 'DEFEAT', reason: `Bí từ ngay hiệp đầu trước từ "${matchContext.lastOpponentWord}"` };
+      }
+    }
+
+    // 3. Kiểm tra thông báo kết thúc chỉ trong khu vực sàn đấu (#main-wrapper)
+    const gameArea = document.querySelector('#main-wrapper');
+    if (gameArea) {
+      const areaText = (gameArea.innerText || '').toLowerCase();
+      if (areaText.includes('bạn bị xử thua') || areaText.includes('bạn đã hết giờ') || areaText.includes('bạn thua')) {
+        return { result: 'DEFEAT', reason: 'Thông báo xử thua trên sàn đấu' };
+      }
+      if (areaText.includes('đối thủ đã thoát') || areaText.includes('đối thủ đã rời') || areaText.includes('đối thủ hết giờ')) {
+        return { result: 'VICTORY', reason: 'Đối thủ đã thoát / hết giờ' };
+      }
+    }
+
+    // 4. Fallback mặc định theo người cầm lượt
+    if (lastActivePlayer === 'bot') {
+      return { result: 'DEFEAT', reason: 'Hết thời gian lượt đi của Bot' };
+    }
+    return { result: 'VICTORY', reason: 'Đối thủ không phản hồi' };
+  }
+
+  function formatSingleMatchReport(match) {
+    const rawRes = match.result || match.matchMetadata?.result || 'UNKNOWN';
+    const isWin = rawRes.includes('VICTORY') || rawRes.includes('THẮNG') || rawRes.includes('WIN');
+    const badge = isWin ? '🏆 THẮNG (VICTORY)' : '❌ THUA (DEFEAT)';
+    const turns = match.turnLogs || [];
+    const allMoves = match.allMoves || [];
+    const totalTurns = match.totalTurns || turns.length;
+    const room = match.matchMetadata?.roomCode || match.roomCode || window.location.pathname;
+    const time = new Date(match.endTime || Date.now()).toLocaleString('vi-VN');
+
+    let txt = `================================================================================\n`;
+    txt += `                 NHẬT KÝ CHI TIẾT VÁN ĐẤU VUA NỐI TỪ\n`;
+    txt += `================================================================================\n`;
+    txt += `- Thời gian kết thúc:  ${time}\n`;
+    txt += `- KẾT QUẢ VÁN ĐẤU:     ${badge}\n`;
+    txt += `- Tổng số lượt nối:    ${totalTurns} lượt\n`;
+    txt += `- Phòng đấu:           ${room}\n`;
+    if (match.endReason) {
+      txt += `- Tình huống kết thúc: ${match.endReason}\n`;
+    }
+    txt += `\n`;
+    txt += `--------------------------------------------------------------------------------\n`;
+    txt += `DANH SÁCH TẤT CẢ CÁC TỪ ĐÃ NỐI TRONG VÁN (CẢ ĐỐI THỦ VÀ BOT):\n`;
+    txt += `--------------------------------------------------------------------------------\n`;
+
+    if (allMoves.length > 0) {
+      txt += `STT | Bên Đi       | Từ Đã Nối            | Chiến Thuật / Ghi Chú    | Độ Trễ\n`;
+      txt += `----+--------------+----------------------+--------------------------+---------\n`;
+      allMoves.forEach((m, idx) => {
+        const stt = (idx + 1).toString().padStart(3, ' ');
+        const side = (m.side || 'Người chơi').padEnd(12, ' ');
+        const word = (m.word || '—').padEnd(20, ' ');
+        const strat = (m.strategy || m.note || 'Bình thường').padEnd(24, ' ');
+        const lat = m.latencyMs ? `${m.latencyMs}ms` : '—';
+        txt += `${stt} | ${side} | ${word} | ${strat} | ${lat}\n`;
+      });
+    } else if (turns.length > 0) {
+      txt += `Lượt | Từ Đối Thủ          | Bot Nối (Phản Đòn)   | Chiến Thuật     | Độ Trễ\n`;
+      txt += `-----+--------------------+--------------------+-----------------+---------\n`;
+      turns.forEach((tl, i) => {
+        const step = (tl.step || i + 1).toString().padStart(4, ' ');
+        const opp = (tl.opponentWord || '—').padEnd(20, ' ');
+        const bot = (tl.botResponse || tl.botWord || '—').padEnd(20, ' ');
+        const strat = (tl.strategy || tl.moveType || 'Bình thường').padEnd(17, ' ');
+        const lat = tl.latencyMs ? `${tl.latencyMs}ms` : '—';
+        txt += `${step} | ${opp} | ${bot} | ${strat} | ${lat}\n`;
+      });
+    } else {
+      txt += `(Không có lượt nối nào được ghi nhận)\n`;
+    }
+
+    const traps = match.tacticsSummary?.trapWordsUsed || [];
+    const news = match.tacticsSummary?.discoveredNewWords || [];
+    txt += `--------------------------------------------------------------------------------\n`;
+    txt += `TỔNG KẾT CHIẾN THUẬT:\n`;
+    txt += `- Đòn hiểm đã dùng:    ${traps.length > 0 ? traps.map((w) => `"${w}"`).join(', ') : 'Không có'}\n`;
+    txt += `- Từ mới ghi nhận:     ${news.length > 0 ? news.map((w) => `"${w}"`).join(', ') : 'Không có'}\n`;
+    txt += `================================================================================\n`;
+    return txt;
+  }
+
+  function format30MatchesReport(matchesList) {
+    const total = matchesList.length;
+    let wins = 0;
+    let losses = 0;
+    let totalTraps = 0;
+    matchesList.forEach((m) => {
+      const rawRes = m.result || m.matchMetadata?.result || 'UNKNOWN';
+      if (rawRes.includes('VICTORY') || rawRes.includes('THẮNG') || rawRes.includes('WIN')) wins++;
+      else losses++;
+      totalTraps += (m.tacticsSummary?.trapWordsUsed || []).length;
+    });
+    const winRate = total > 0 ? Math.round((wins / total) * 100) : 0;
+
+    let txt = `================================================================================\n`;
+    txt += `         BÁO CÁO TỰ ĐỘNG: TỔNG HỢP ${total} VÁN ĐẤU VUA NỐI TỪ\n`;
+    txt += `================================================================================\n`;
+    txt += `Thời gian xuất:        ${new Date().toLocaleString('vi-VN')}\n`;
+    txt += `Tổng số ván:           ${total} ván\n`;
+    txt += `Kết quả:               🏆 Thắng: ${wins} ván (${winRate}%) | ❌ Thua: ${losses} ván\n`;
+    txt += `Tổng đòn hiểm đã dùng: ${totalTraps} đòn sát thủ\n`;
+    txt += `Thư mục lưu máy tính:  C:\\Users\\huy29\\Desktop\\thangthuatubot\n`;
+    txt += `================================================================================\n\n`;
+
+    matchesList.forEach((m, idx) => {
+      const rawRes = m.result || m.matchMetadata?.result || 'UNKNOWN';
+      const isWin = rawRes.includes('VICTORY') || rawRes.includes('THẮNG') || rawRes.includes('WIN');
+      const badge = isWin ? '🏆 THẮNG (VICTORY)' : '❌ THUA (DEFEAT)';
+      const turns = m.turnLogs || [];
+      const allMoves = m.allMoves || [];
+      const time = new Date(m.endTime || Date.now()).toLocaleString('vi-VN');
+      const room = m.matchMetadata?.roomCode || m.roomCode || '/rank';
+
+      txt += `--------------------------------------------------------------------------------\n`;
+      txt += `[VÁN #${idx + 1}/${total}] - ${badge} | Thời gian: ${time} | Phòng: ${room}\n`;
+      if (m.endReason) {
+        txt += `Tình huống: ${m.endReason}\n`;
+      }
+      txt += `--------------------------------------------------------------------------------\n`;
+
+      if (allMoves.length > 0) {
+        allMoves.forEach((mv, i) => {
+          txt += `  #${i + 1} [${mv.side}]: "${mv.word}" ${mv.strategy ? `[${mv.strategy}]` : ''} ${mv.latencyMs ? `(${mv.latencyMs}ms)` : ''}\n`;
+        });
+      } else if (turns.length > 0) {
+        turns.forEach((t, i) => {
+          txt += `  Lượt ${i + 1}: Đối thủ: "${t.opponentWord || '—'}" ➔ Bot: "${t.botResponse || t.botWord || '—'}" [${t.strategy || 'Normal'}]\n`;
+        });
+      }
+      txt += `\n`;
+    });
+
+    txt += `================================================================================\n`;
+    txt += `           KẾT THÚC BÁO CÁO TỔNG HỢP ${total} VÁN ĐẤU\n`;
+    txt += `================================================================================\n`;
+    return txt;
+  }
+  const format10MatchesReport = format30MatchesReport;
+
+  // =========================================================================
+  // LỚP 4B: NLP & TELEMETRY GATEWAY (BFF Pattern — Không gọi trực tiếp Firestore)
+  // =========================================================================
+
+  // =========================================================================
+  // MODULE AI REPLAY MINER: BÓC TÁCH LOG & TỰ TIẾN HÓA (GẬY ÔNG ĐẬP LƯNG ÔNG)
+  // =========================================================================
+  function normalizePhrase(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    return raw
+      .trim()
+      .toLowerCase()
+      .normalize('NFC')
+      .replace(/[,\.;:!\?"'\(\)\[\]\{\}]/g, '')
+      .replace(/\s+/g, ' ');
+  }
+
+  function extractTurnsFromMatch(match) {
+    const turns = [];
+    if (Array.isArray(match.danhSachTuDaNoi) && match.danhSachTuDaNoi.length > 0) {
+      for (const item of match.danhSachTuDaNoi) {
+        const opp = normalizePhrase(item.tuDoiThu || item.opponentWord || '');
+        const bot = normalizePhrase(item.botDapTu || item.botResponse || item.botWord || '');
+        const isErr = Boolean(item.isError || (item.chienThuat || '').toLowerCase().includes('lỗi') || (item.chienThuat || '').toLowerCase().includes('từ chối'));
+        turns.push({
+          opponentWord: opp,
+          botResponse: bot === '—' ? '' : bot,
+          isError: isErr,
+          strategy: item.chienThuat || item.strategy,
+        });
+      }
+      return turns;
+    }
+
+    const turnLogs = match.turnLogs || match.rawTelemetry?.turnLogs;
+    if (Array.isArray(turnLogs) && turnLogs.length > 0) {
+      for (const item of turnLogs) {
+        const opp = normalizePhrase(item.opponentWord || item.tuDoiThu || '');
+        const bot = normalizePhrase(item.botResponse || item.botWord || item.botDapTu || '');
+        const isErr = Boolean(item.isError || (item.strategy || '').toLowerCase().includes('error'));
+        turns.push({
+          opponentWord: opp,
+          botResponse: bot === '—' ? '' : bot,
+          isError: isErr,
+          strategy: item.strategy || item.chienThuat,
+        });
+      }
+      return turns;
+    }
+
+    const allMoves = match.allMoves || match.rawTelemetry?.allMoves;
+    if (Array.isArray(allMoves) && allMoves.length > 0) {
+      let currentOpp = '';
+      for (const move of allMoves) {
+        const isOpp = move.side === 'opponent' || (move.side || '').toLowerCase().includes('đối thủ');
+        const word = normalizePhrase(move.word || '');
+        if (isOpp) {
+          currentOpp = word;
+        } else {
+          turns.push({
+            opponentWord: currentOpp,
+            botResponse: word,
+            isError: Boolean(move.isError),
+            strategy: move.strategy,
+          });
+          currentOpp = '';
+        }
+      }
+      if (currentOpp) {
+        turns.push({ opponentWord: currentOpp, botResponse: '' });
+      }
+      return turns;
+    }
+
+    return turns;
+  }
+
+  function isMatchLoss(match) {
+    const resultStr = String(
+      match.result ||
+      match.ketQua ||
+      match.resultEnglish ||
+      match.rawTelemetry?.result ||
+      match.matchMetadata?.result ||
+      ''
+    ).toUpperCase();
+
+    return (
+      resultStr.includes('DEFEAT') ||
+      resultStr.includes('LOSS') ||
+      resultStr.includes('THUA') ||
+      resultStr.includes('THẤT BẠI')
+    );
+  }
+
+  // ─── BỘ BÓC TÁCH LOG ĐỊNH DẠNG VĂN BẢN TXT (HỖ TRỢ TRAN_*.TXT & 10/20/30 VÁN) ───
+  function parseTxtMatchLogs(content, fileName = '') {
+    if (!content || typeof content !== 'string') return [];
+
+    const isMultiMatch = /\[VÁN\s*#\d+/i.test(content) || (content.match(/NHẬT KÝ CHI TIẾT VÁN ĐẤU/gi) || []).length > 1;
+    const rawSections = [];
+
+    if (isMultiMatch) {
+      if (/\[VÁN\s*#\d+/i.test(content)) {
+        const parts = content.split(/(?=\[VÁN\s*#\d+)/i);
+        for (const p of parts) {
+          if (/\[VÁN\s*#\d+/i.test(p)) rawSections.push(p);
+        }
+      } else {
+        const parts = content.split(/(?================================================================================\s*\r?\n\s*NHẬT KÝ CHI TIẾT VÁN ĐẤU)/i);
+        for (const p of parts) {
+          if (p.includes('KẾT QUẢ VÁN ĐẤU') || p.includes('Lượt |') || p.includes('STT |')) rawSections.push(p);
+        }
+      }
+    }
+
+    if (rawSections.length === 0) {
+      rawSections.push(content);
+    }
+
+    const matches = [];
+
+    for (let sIdx = 0; sIdx < rawSections.length; sIdx++) {
+      const sec = rawSections[sIdx];
+      const lines = sec.split(/\r?\n/);
+
+      let result = '';
+      let roomCode = '';
+      let fatalWord = '';
+      let opponentName = 'Cao thủ Noitu';
+      const turnLogs = [];
+      const allMoves = [];
+
+      // Phân tích thông tin ván đấu
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (/KẾT QUẢ VÁN ĐẤU/i.test(trimmed) || /\[VÁN\s*#\d+.*\]\s*-\s*/i.test(trimmed)) {
+          if (trimmed.includes('THUA') || trimmed.includes('DEFEAT') || trimmed.includes('THẤT BẠI') || trimmed.includes('❌')) {
+            result = 'DEFEAT';
+          } else if (trimmed.includes('THẮNG') || trimmed.includes('VICTORY') || trimmed.includes('WIN') || trimmed.includes('🏆')) {
+            result = 'VICTORY';
+          }
+        }
+        if (/Phòng(?:\s*đấu)?:\s*(.+)/i.test(trimmed)) {
+          const m = trimmed.match(/Phòng(?:\s*đấu)?:\s*(.+)/i);
+          if (m) roomCode = m[1].trim();
+        }
+        if (/Đối thủ:\s*(.+)/i.test(trimmed)) {
+          const m = trimmed.match(/Đối thủ:\s*(.+)/i);
+          if (m) opponentName = m[1].trim();
+        }
+        if (/Tình huống(?: kết thúc)?:\s*(.+)/i.test(trimmed)) {
+          const m = trimmed.match(/Tình huống(?: kết thúc)?:\s*(.+)/i);
+          if (m) fatalWord = m[1].trim();
+        }
+      }
+
+      if (!result && fileName) {
+        const upper = fileName.toUpperCase();
+        if (upper.includes('THUA') || upper.includes('DEFEAT') || upper.includes('LOSS')) result = 'DEFEAT';
+        else if (upper.includes('THANG') || upper.includes('WIN') || upper.includes('VICTORY')) result = 'VICTORY';
+      }
+
+      let isAllMovesTable = false;
+      let isTurnLogsTable = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+
+        // 1. DẠNG DANH SÁCH: #1 [Đối thủ]: "từ" [STRATEGY] (1234ms)
+        const listMatch = line.match(/^#?(\d+)\s*\[([^\]]+)\]:\s*"([^"]+)"(?:\s*\[([^\]]*)\])?(?:\s*\(([^)]*)\))?/);
+        if (listMatch) {
+          const order = parseInt(listMatch[1], 10);
+          const sideRaw = listMatch[2].trim();
+          const wordRaw = listMatch[3].trim();
+          const strat = listMatch[4]?.trim() || '';
+          const latStr = listMatch[5]?.trim() || '';
+          const lat = parseInt(latStr, 10) || undefined;
+
+          const isBot = sideRaw.toLowerCase().includes('bot') || sideRaw.toLowerCase().includes('mình');
+          const isErrorOrTimeout = wordRaw.includes('❌') || wordRaw.toLowerCase().includes('bí từ') || wordRaw.toLowerCase().includes('hết giờ') || wordRaw.toLowerCase().includes('đầu hàng');
+
+          if (isErrorOrTimeout) {
+            if (isBot && !result) result = 'DEFEAT';
+            if (!isBot && !result) result = 'VICTORY';
+          } else {
+            allMoves.push({
+              order,
+              side: isBot ? 'Bot (mình)' : 'Đối thủ',
+              word: wordRaw,
+              strategy: strat,
+              latencyMs: lat,
+            });
+          }
+          continue;
+        }
+
+        // 2. DẠNG MŨI TÊN: Lượt 1: Đối thủ: "từ 1" ➔ Bot: "từ 2"
+        const arrowMatch = line.match(/Lượt\s*(\d+)[:.]\s*Đối thủ[:\s]*"([^"]*)"\s*➔\s*Bot[:\s]*"([^"]*)"(?:\s*\[([^\]]*)\])?/i);
+        if (arrowMatch) {
+          const oppWord = arrowMatch[2].trim();
+          const botWord = arrowMatch[3].trim();
+          const strat = arrowMatch[4]?.trim() || '';
+
+          const cleanOpp = (oppWord === '—' || oppWord.includes('❌')) ? '' : oppWord;
+          const cleanBot = (botWord === '—' || botWord.includes('❌')) ? '' : botWord;
+
+          if (cleanOpp || cleanBot) {
+            turnLogs.push({
+              opponentWord: cleanOpp,
+              botResponse: cleanBot,
+              strategy: strat,
+            });
+          }
+          continue;
+        }
+
+        // 3. DẠNG BẢNG
+        if (line.includes('STT |') && line.includes('Bên Đi') && line.includes('Từ Đã Nối')) {
+          isAllMovesTable = true;
+          isTurnLogsTable = false;
+          continue;
+        }
+        if (line.includes('Lượt |') && line.includes('Từ Đối Thủ') && line.includes('Bot Nối')) {
+          isTurnLogsTable = true;
+          isAllMovesTable = false;
+          continue;
+        }
+        if (line.startsWith('----+') || line.startsWith('====+') || line.startsWith('-----+')) continue;
+        if (line.startsWith('===') || line.startsWith('---') || line.includes('TỔNG KẾT CHIẾN THUẬT')) {
+          isAllMovesTable = false;
+          isTurnLogsTable = false;
+          continue;
+        }
+
+        if (isAllMovesTable && line.includes('|')) {
+          const cols = line.split('|').map(c => c.trim());
+          if (cols.length >= 3 && /^\d+$/.test(cols[0])) {
+            const order = parseInt(cols[0], 10);
+            const side = cols[1];
+            const word = cols[2];
+            const strategy = cols[3] || '';
+            const latStr = cols[4] || '';
+            const latencyMs = parseInt(latStr, 10) || undefined;
+            if (word && word !== '—' && !word.includes('❌')) {
+              allMoves.push({ order, side, word, strategy, latencyMs });
+            }
+          }
+        } else if (isTurnLogsTable && line.includes('|')) {
+          const cols = line.split('|').map(c => c.trim());
+          if (cols.length >= 3 && /^\d+$/.test(cols[0])) {
+            const oppWord = cols[1];
+            const botWord = cols[2];
+            const strategy = cols[3] || '';
+            const latStr = cols[4] || '';
+            const latencyMs = parseInt(latStr, 10) || undefined;
+
+            turnLogs.push({
+              opponentWord: (oppWord === '—' || oppWord.includes('❌')) ? '' : oppWord,
+              botResponse: (botWord === '—' || botWord.includes('❌')) ? '' : botWord,
+              strategy,
+              latencyMs,
+            });
+          }
+        }
+      }
+
+      // Convert allMoves to turnLogs
+      if (allMoves.length > 0 && turnLogs.length === 0) {
+        let currentOpp = '';
+        for (const move of allMoves) {
+          const isOpp = move.side === 'opponent' || move.side.toLowerCase().includes('đối thủ');
+          if (isOpp) {
+            currentOpp = move.word;
+          } else {
+            turnLogs.push({
+              opponentWord: currentOpp,
+              botResponse: move.word,
+              strategy: move.strategy,
+              latencyMs: move.latencyMs,
+            });
+            currentOpp = '';
+          }
+        }
+        if (currentOpp) {
+          turnLogs.push({ opponentWord: currentOpp, botResponse: '' });
+        }
+      }
+
+      if (turnLogs.length > 0 || allMoves.length > 0 || fatalWord) {
+        matches.push({
+          matchId: `txt_match_${sIdx + 1}_${Date.now()}`,
+          result: result || 'UNKNOWN',
+          opponentName,
+          roomCode: roomCode || '/rank',
+          fatalWord,
+          turnLogs,
+          allMoves,
+        });
+      }
+    }
+
+    return matches;
+  }
+
+  function parseAndMineMatchLogs(rawInput, fileName = '') {
+    let matches = [];
+    if (typeof rawInput === 'string') {
+      try {
+        const parsed = JSON.parse(rawInput);
+        return parseAndMineMatchLogs(parsed, fileName);
+      } catch (e) {
+        const txtMatches = parseTxtMatchLogs(rawInput, fileName);
+        return parseAndMineMatchLogs(txtMatches, fileName);
+      }
+    }
+    if (Array.isArray(rawInput)) {
+      matches = rawInput;
+    } else if (rawInput && typeof rawInput === 'object') {
+      if (Array.isArray(rawInput.matches)) {
+        matches = rawInput.matches;
+      } else if (Array.isArray(rawInput.sessions)) {
+        matches = rawInput.sessions;
+      } else if (Array.isArray(rawInput.archives)) {
+        matches = rawInput.archives;
+      } else {
+        matches = [rawInput];
+      }
+    }
+
+    const newKillersMap = new Map();
+    const newEscapesMap = new Map();
+    const bannedWordsSet = new Set();
+
+    for (const match of matches) {
+      if (!match || typeof match !== 'object') continue;
+      const turns = extractTurnsFromMatch(match);
+      const isLoss = isMatchLoss(match);
+      const opponentName = match.opponentName || match.matchMetadata?.opponentName || match.phongDau || 'Cao thủ Noitu';
+
+      // 1. HỌC ĐÒN KẾT LIỄU: Nếu thua, từ cuối của đối thủ là SÁT THỦ!
+      if (isLoss && turns.length > 0) {
+        let killerWord = '';
+        for (let i = turns.length - 1; i >= 0; i--) {
+          if (turns[i].opponentWord) {
+            killerWord = turns[i].opponentWord;
+            break;
+          }
+        }
+        if (!killerWord && match.fatalWord) {
+          killerWord = normalizePhrase(match.fatalWord);
+        }
+        if (killerWord) {
+          const parts = killerWord.split(' ');
+          if (parts.length === 2) {
+            const starter = parts[0];
+            const ending = parts[1];
+            const DEADLY_KILLER_ENDINGS = new Set([
+              'quắp', 'loét', 'hoắt', 'toét', 'bẵng', 'sượt', 'tọt', 'ngoẹo',
+              'khiễng', 'khọm', 'rượi', 'choắt', 'nghẽn', 'xoẹo', 'khoèo',
+              'khoằm', 'ngoạm', 'ngoắt', 'khuỵu', 'tọp', 'hoắm', 'sũng',
+              'huých', 'oằn', 'nhẫy', 'rọm', 'choạng', 'trẹo', 'ngắc',
+              'ngớp', 'oặt', 'dẹo', 'khựng', 'bợt', 'phỉnh', 'xoẳn',
+              'toác', 'chõng', 'chuếnh', 'khiu', 'uể', 'ẽo', 'ỏn', 'ủn',
+              'úp', 'ụt', 'ợt', 'ét', 'ẹt', 'ứt', 'ực', 'đét', 'nhúm', 'lúi',
+              'lụi', 'ngoác', 'nhoét', 'hoét', 'hoác', 'khoét', 'quỷnh', 'khoắng'
+            ]);
+
+            if (DEADLY_KILLER_ENDINGS.has(ending)) {
+              if (!newKillersMap.has(killerWord)) {
+                newKillersMap.set(killerWord, {
+                  phrase: killerWord,
+                  starter,
+                  ending,
+                  sourceOpponent: opponentName,
+                  source: 'noitu.fun',
+                  priority: 9999,
+                  reason: `Đòn sát thủ của đối thủ "${opponentName}" hạ gục bot trên Noitu.fun (Gậy ông đập lưng ông)`,
+                });
+              }
+            } else {
+              if (!newEscapesMap.has(killerWord)) {
+                newEscapesMap.set(killerWord, {
+                  starter,
+                  word: killerWord,
+                  ending,
+                  resolvedSyllable: starter,
+                  sourceOpponent: opponentName,
+                  source: 'noitu.fun',
+                  priority: 100,
+                  reason: `Từ nối thông dụng của đối thủ "${opponentName}" trên Noitu.fun`,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // 2. HỌC ĐÒN HÓA GIẢI THẾ BÍ (Đối thủ giải được âm khó của mình)
+      for (let i = 0; i < turns.length - 1; i++) {
+        const myTurn = turns[i];
+        const opponentNextTurn = turns[i + 1];
+        const myWord = myTurn.botResponse;
+        const oppWord = opponentNextTurn.opponentWord;
+
+        if (myWord && oppWord) {
+          const myParts = myWord.split(' ');
+          const oppParts = oppWord.split(' ');
+
+          if (myParts.length === 2 && oppParts.length === 2) {
+            const myEnding = myParts[1];
+            const oppStarter = oppParts[0];
+
+            if (myEnding === oppStarter) {
+              const escEnding = oppParts[1];
+              if (!newEscapesMap.has(oppWord)) {
+                newEscapesMap.set(oppWord, {
+                  starter: oppStarter,
+                  word: oppWord,
+                  ending: escEnding,
+                  resolvedSyllable: myEnding,
+                  sourceOpponent: opponentName,
+                  source: 'noitu.fun',
+                  priority: 8888,
+                  reason: `Lời giải hợp lệ của "${opponentName}" hóa giải âm "${myEnding}" của bot trên Noitu.fun`,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      // 3. LỌC ĐÒN TỰ SÁT (Các từ bot đánh bị lỗi / trừ tim)
+      const failed = match.failedWords || match.rawTelemetry?.failedWords || [];
+      if (Array.isArray(failed)) {
+        for (const w of failed) {
+          const clean = normalizePhrase(w);
+          if (clean && clean.split(' ').length === 2) bannedWordsSet.add(clean);
+        }
+      }
+      for (const turn of turns) {
+        if (turn.isError && turn.botResponse) {
+          bannedWordsSet.add(turn.botResponse);
+        }
+      }
+    }
+
+    return {
+      newKillers: Array.from(newKillersMap.values()),
+      newEscapes: Array.from(newEscapesMap.values()),
+      bannedWords: Array.from(bannedWordsSet),
+      summary: {
+        matchesAnalyzed: matches.length,
+        totalKillers: newKillersMap.size,
+        totalEscapes: newEscapesMap.size,
+        totalBanned: bannedWordsSet.size,
+        source: 'noitu.fun',
+      }
+    };
+  }
+
+  class VNTGateway {
+    constructor(adapter) {
+      this.adapter = adapter;
+    }
+
+    async callApi(endpoint, body) {
+      const servers = [this.adapter.config.apiServer, this.adapter.config.fallbackServer, this.adapter.config.localServer];
+      const headers = {
+        'Content-Type': 'application/json',
+        'x-api-key': this.adapter.config.vntApiKey || 'VNT-SUPER-BOT-2026',
+        'Authorization': `Bearer ${this.adapter.config.vntApiKey || 'VNT-SUPER-BOT-2026'}`,
+      };
+
+      const isPost = body !== undefined && body !== null && Object.keys(body).length > 0;
+      for (const s of servers) {
+        try {
+          const res = await this.adapter.fetch(`${s}${endpoint}`, {
+            method: isPost ? 'POST' : 'GET',
+            headers,
+            body: isPost ? JSON.stringify(body) : undefined,
+          });
+          if (res.ok) return await res.json();
+        } catch (e) {}
+      }
+      return null;
+    }
+
+    sendHeartbeat(data) {
+      return this.callApi('/api/bot/heartbeat', {
+        sessionId: this.adapter.sessionId,
+        nodeId: this.adapter.machineId,
+        deviceName: this.adapter.deviceName,
+        ownerName: typeof GM_getValue === 'function' ? GM_getValue('vuanoitu_owner_name', '') : '',
+        apiKey: this.adapter.config.vntApiKey || 'VNT-SUPER-BOT-2026',
+        clientIp: this.adapter.publicIp,
+        userAgent: navigator.userAgent,
+        ...data,
+      });
+    }
+
+    sendMatchLog(logData) {
+      return this.callApi('/api/bot/match-logs', {
+        matchId: this.adapter.sessionId,
+        deviceName: this.adapter.deviceName,
+        ownerName: this.adapter.config.ownerName || '',
+        ...logData,
+      });
+    }
+
+    archiveSession(archivePayload) {
+      window.VNT_LAST_MATCH_ARCHIVE = archivePayload;
+
+      // 1. Lưu hồ sơ vào localStorage
+      try {
+        const rawHistory = localStorage.getItem('vnt_match_history_full');
+        const historyList = rawHistory ? JSON.parse(rawHistory) : [];
+        historyList.unshift(archivePayload);
+        if (historyList.length > 50) historyList.pop();
+        localStorage.setItem('vnt_match_history_full', JSON.stringify(historyList));
+
+        // Kiểm đếm tiến độ 30 ván & Tự động tải về máy khi đủ 30 ván
+        const autoDownloadEnabled = localStorage.getItem('vnt_auto_download_30_enabled') !== 'false';
+        const currentCount = parseInt(localStorage.getItem('vnt_match_count_30') || localStorage.getItem('vnt_match_count_10') || '0', 10) + 1;
+        localStorage.setItem('vnt_match_count_30', currentCount.toString());
+
+        const progressEl = document.getElementById('vnt-stat-progress-30') || document.getElementById('vnt-stat-progress-10');
+        if (progressEl) progressEl.textContent = `${currentCount % 30}/30`;
+
+        if (autoDownloadEnabled && currentCount >= 30) {
+          this.adapter.log('AUTO_EXPORT_30', `🎉 ĐÃ HOÀN THÀNH 30 VÁN ĐẤU! TỰ ĐỘNG XUẤT FILE TỔNG HỢP VỀ MÁY TÍNH...`);
+          const last30 = historyList.slice(0, 30);
+          const txt30 = format30MatchesReport(last30);
+          const filename = `tong_hop_30_van_dau_${Date.now()}.txt`;
+          triggerDownloadTxt(filename, txt30);
+          localStorage.setItem('vnt_match_count_30', '0');
+          if (progressEl) progressEl.textContent = `0/30`;
+        }
+      } catch (storageErr) {
+        this.adapter.warn('STORAGE', 'Lỗi lưu lịch sử match vào localStorage:', storageErr);
+      }
+
+      // 2. Gửi hồ sơ lên các Server Gateway
+      const servers = [this.adapter.config.apiServer, this.adapter.config.fallbackServer, this.adapter.config.localServer];
+      const payloadString = JSON.stringify(archivePayload);
+      const blob = new Blob([payloadString], { type: 'application/json' });
+
+      // CƠ CHẾ 1: navigator.sendBeacon — Tuyệt đối không bị hủy khi đổi trang SPA / Requeue
+      let beaconSent = false;
+      for (const s of servers) {
+        try {
+          if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+            const ok = navigator.sendBeacon(`${s}/api/bot/archive-session`, blob);
+            if (ok) {
+              beaconSent = true;
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+
+      // CƠ CHẾ 2: Fallback fetch với keepalive: true (chuẩn W3C chạy ngầm)
+      if (!beaconSent) {
+        for (const s of servers) {
+          try {
+            fetch(`${s}/api/bot/archive-session`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': this.adapter.config.vntApiKey || 'VNT-SUPER-BOT-2026',
+              },
+              body: payloadString,
+              keepalive: true,
+            }).catch(() => {});
+          } catch (e) {}
+        }
+      }
+    }
+
+    purgeWord(word, reason) {
+      this.adapter.warn('PURGE', `Phát hiện từ rác: "${word}" - Game từ chối -> Bắn lệnh XÓA VĨNH VIỄN!`);
+      return this.callApi('/api/bot/purge-word', { word, reason: reason || 'Rejected by Noitu.fun' });
+    }
+
+    ingestGoldWord(word) {
+      this.adapter.log('GOLD', `Đối thủ đánh ra từ "${word}" -> Game chắc chắn công nhận -> NẠP KHO VÀNG!`);
+      return this.callApi('/api/bot/ingest-gold-word', { word, source: 'opponent_verified' });
+    }
+
+    reportInvalid(word, reason) {
+      return this.purgeWord(word, reason);
+    }
+
+    aiLearn(fatalSyllable, fullWord, opponent) {
+      return this.callApi('/api/bot/ai-learn', { fatalSyllable, fullWord, opponent });
+    }
+
+    recordUnsolved(word, opponent) {
+      return this.callApi('/api/bot/unsolved', { word, opponent });
+    }
+
+    ingestWord(phrase, opponent) {
+      return this.callApi('/api/bot/ingest-word', {
+        phrase,
+        priority_weight: 150,
+        opponent: opponent || 'Đối thủ Noitu.fun',
+      });
+    }
+
+    searchMinimax(starter) {
+      return this.callApi(`/api/bot-search?word=${encodeURIComponent(starter)}`, {});
+    }
+
+    solveMask(pattern, hint) {
+      return this.callApi('/api/bot-solve-mask', { pattern, hint });
+    }
+  }
+
+  // =========================================================================
+  // LỚP 2: CORE GAME STATE MACHINE (FSM — Quản lý Trạng Thái Hữu Hạn)
+  // =========================================================================
+  const BotState = {
+    IDLE: 'IDLE',
+    LOBBY_WAITING: 'LOBBY_WAITING',
+    OPPONENT_TURN: 'OPPONENT_TURN',
+    BOT_TURN: 'BOT_TURN',
+    THINKING: 'THINKING',
+    EXECUTING: 'EXECUTING',
+    VALIDATING: 'VALIDATING',
+    MATCH_FINISHED: 'MATCH_FINISHED',
+  };
+
+  const VALID_TRANSITIONS = {
+    [BotState.IDLE]: [BotState.LOBBY_WAITING, BotState.OPPONENT_TURN, BotState.BOT_TURN],
+    [BotState.LOBBY_WAITING]: [BotState.OPPONENT_TURN, BotState.BOT_TURN, BotState.IDLE],
+    [BotState.OPPONENT_TURN]: [BotState.BOT_TURN, BotState.MATCH_FINISHED, BotState.LOBBY_WAITING, BotState.IDLE],
+    [BotState.BOT_TURN]: [BotState.THINKING, BotState.OPPONENT_TURN, BotState.MATCH_FINISHED, BotState.LOBBY_WAITING, BotState.IDLE],
+    [BotState.THINKING]: [BotState.EXECUTING, BotState.OPPONENT_TURN, BotState.MATCH_FINISHED, BotState.LOBBY_WAITING, BotState.IDLE],
+    [BotState.EXECUTING]: [BotState.VALIDATING, BotState.OPPONENT_TURN, BotState.MATCH_FINISHED, BotState.LOBBY_WAITING, BotState.IDLE],
+    [BotState.VALIDATING]: [BotState.BOT_TURN, BotState.OPPONENT_TURN, BotState.MATCH_FINISHED, BotState.LOBBY_WAITING, BotState.IDLE],
+    [BotState.MATCH_FINISHED]: [BotState.LOBBY_WAITING, BotState.IDLE],
+  };
+
+  class GameStateMachine {
+    constructor(adapter, lexiconEngine, humanizer, gateway) {
+      this.adapter = adapter;
+      this.lexicon = lexiconEngine;
+      this.humanizer = humanizer;
+      this.gateway = gateway;
+
+      this.state = BotState.IDLE;
+      this.stateEnteredTimestamp = Date.now();
+      this.isLocked = false;
+
+      this.matchContext = {
+        startTime: 0,
+        botTurnCount: 0,
+        lastOpponentWord: '',
+        trapsUsed: [],
+        fallbacksCount: 0,
+        discoveredWords: [],
+        turnLogs: [],
+        allMoves: [],
+        lastActivePlayer: 'none',
+        usedWords: new Set(),
+        lastHeartbeatResult: null,
+      };
+
+      this.lastAutoActionTimestamp = 0;
+      this.lastObservedUrl = window.location.href;
+    }
+
+    isValidTransition(from, to) {
+      if (from === to) return true;
+      const allowed = VALID_TRANSITIONS[from];
+      return Array.isArray(allowed) && allowed.includes(to);
+    }
+
+    transition(newState, context = {}) {
+      if (this.state === newState) return true;
+      if (!this.isValidTransition(this.state, newState)) {
+        this.adapter.warn('FSM', `Chuyển trạng thái không hợp lệ: ${this.state} ➔ ${newState}`);
+        return false;
+      }
+
+      const oldState = this.state;
+      this.state = newState;
+      this.stateEnteredTimestamp = Date.now();
+      this.adapter.log('FSM', `${oldState} ➔ ${newState}`);
+      this.onStateChanged(newState, oldState, context);
+      return true;
+    }
+
+    resetMatchContext() {
+      this.matchContext = {
+        startTime: Date.now(),
+        botTurnCount: 0,
+        lastOpponentWord: '',
+        trapsUsed: [],
+        fallbacksCount: 0,
+        discoveredWords: [],
+        turnLogs: [],
+        allMoves: [],
+        lastActivePlayer: 'none',
+        usedWords: new Set(),
+        isArchived: false,
+        lastHeartbeatResult: null,
+      };
+    }
+
+    flushMatchArchive(resultStatus = 'UNKNOWN') {
+      if (this.matchContext.isArchived) return;
+      if (this.matchContext.botTurnCount === 0 && this.matchContext.turnLogs.length === 0 && !this.matchContext.lastOpponentWord && this.matchContext.allMoves.length === 0) {
+        return;
+      }
+      this.matchContext.isArchived = true;
+
+      const result = resultStatus.toUpperCase();
+      this.matchContext.lastHeartbeatResult = result === 'VICTORY' ? 'win' : (result === 'DEFEAT' ? 'lose' : 'draw');
+
+      // Ghi chú chi tiết đòn kết liễu hoặc nguyên nhân thất bại vào allMoves
+      if (result === 'DEFEAT') {
+        const lastMove = this.matchContext.allMoves[this.matchContext.allMoves.length - 1];
+        if (lastMove && lastMove.side === 'opponent') {
+          lastMove.note = '⚡ (Nước cờ chiếu bí của Đối thủ)';
+          this.matchContext.allMoves.push({
+            order: this.matchContext.allMoves.length + 1,
+            side: 'bot',
+            word: '❌ (Bot bí từ / Hết giờ)',
+            note: 'Không tìm ra từ nối hợp lệ',
+            latencyMs: 0,
+            timestamp: Date.now(),
+          });
+        }
+      } else if (result === 'VICTORY') {
+        const lastMove = this.matchContext.allMoves[this.matchContext.allMoves.length - 1];
+        if (lastMove && lastMove.side === 'bot') {
+          lastMove.note = '⚡ (ĐÒN KẾT LIỄU: Khiến đối thủ bí từ)';
+        }
+      }
+
+      const sessionArchivePayload = {
+        sessionId: this.adapter.sessionId,
+        clientId: (this.adapter.publicIp || 'client').replace(/[^a-zA-Z0-9_-]/g, '_'),
+        result,
+        startTime: this.matchContext.startTime || (Date.now() - 60000),
+        endTime: Date.now(),
+        totalTurns: this.matchContext.botTurnCount,
+        matchMetadata: {
+          startTime: this.matchContext.startTime || (Date.now() - 60000),
+          endTime: Date.now(),
+          result,
+          totalTurns: this.matchContext.botTurnCount,
+          roomCode: window.location.pathname,
+        },
+        tacticsSummary: {
+          trapWordsUsed: Array.from(new Set(this.matchContext.trapsUsed)),
+          fallbacksTriggered: this.matchContext.fallbacksCount,
+          discoveredNewWords: Array.from(new Set(this.matchContext.discoveredWords)),
+        },
+        turnLogs: [...this.matchContext.turnLogs],
+        allMoves: [...this.matchContext.allMoves],
+      };
+
+      this.adapter.log('SESSION_ARCHIVE', `💾 Đóng gói gửi hồ sơ lên BFF Gateway (Kết quả: ${result}, ${this.matchContext.botTurnCount} lượt, ${this.matchContext.allMoves.length} nước đi)...`);
+      this.gateway.archiveSession(sessionArchivePayload);
+
+      // Gửi sự kiện kết thúc ván vào /api/bot/match-logs để Live Monitor cập nhật ngay lập tức
+      this.gateway.sendMatchLog({
+        roundIndex: this.matchContext.botTurnCount,
+        opponentWord: this.matchContext.lastOpponentWord || '',
+        botWord: result === 'VICTORY' ? (this.matchContext.allMoves.filter(m => m.side && m.side.includes('Bot')).pop()?.word || '🏆 Kết liễu đối thủ') : '❌ Bí từ / Hết giờ',
+        moveType: 'finish',
+        isSuccess: result === 'VICTORY',
+        isError: false,
+        status: result === 'VICTORY' ? 'win' : (result === 'DEFEAT' ? 'lose' : 'draw'),
+        fatalWord: result === 'DEFEAT' ? (this.matchContext.lastOpponentWord || '') : '',
+        prediction: {
+          winProbability: result === 'VICTORY' ? 100 : 0,
+          boardState: result === 'VICTORY' ? 'checkmate' : 'defeated',
+          boardStateText: result === 'VICTORY' ? '🏆 CHIẾN THẮNG TUYỆT ĐỐI' : '❌ THẤT BẠI',
+          opponentBranches: result === 'VICTORY' ? 0 : 99,
+          turnsToKill: 0,
+          threatLevel: result === 'VICTORY' ? 'zero' : 'fatal',
+        },
+      });
+
+      if (result === 'DEFEAT' && this.matchContext.lastOpponentWord) {
+        const parts = this.matchContext.lastOpponentWord.trim().split(/\s+/);
+        const fatalSyllable = parts[parts.length - 1];
+        this.gateway.recordUnsolved(this.matchContext.lastOpponentWord, 'Đối thủ hạ bot');
+        this.gateway.aiLearn(fatalSyllable, this.matchContext.lastOpponentWord, 'auto-defeat');
+      }
+    }
+
+    onStateChanged(newState, oldState, context) {
+      switch (newState) {
+        case BotState.LOBBY_WAITING:
+          this.handleLobbyWaiting();
+          break;
+        case BotState.BOT_TURN:
+          this.handleBotTurn(context);
+          break;
+        case BotState.MATCH_FINISHED:
+          this.handleMatchFinished(context);
+          break;
+      }
+    }
+
+    getGameContainer() {
+      return document.querySelector('#main-wrapper') || document.body;
+    }
+
+    getRemainingSeconds() {
+      const container = this.getGameContainer();
+      const timerEl = container.querySelector('[class*="base-timer_timeText"], div[role="timer"], [class*="timeText"]');
+      if (timerEl) {
+        const sec = parseInt(timerEl.textContent.trim(), 10);
+        if (!isNaN(sec)) return sec;
+      }
+      return 99;
+    }
+
+    checkInputErrorState(inputEl) {
+      const hasErrorClass = inputEl.classList.contains('inputError') ||
+                            Boolean(inputEl.className && inputEl.className.includes('inputError')) ||
+                            Boolean(document.querySelector('.anim-shake, [class*="inputError"]'));
+
+      const swalToast = document.querySelector('.swal2-toast, .swal2-container');
+      const hasSwalError = swalToast && (
+        swalToast.textContent.includes('Không tồn tại') ||
+        swalToast.textContent.includes('đã được trả lời') ||
+        swalToast.textContent.includes('không có')
+      );
+      return Boolean(hasErrorClass || hasSwalError);
+    }
+
+    extractMaskedPuzzle(container, inputEl) {
+      try {
+        const placeholder = ((inputEl && inputEl.placeholder) || '').toLowerCase();
+        const isFullWordPlaceholder = placeholder.includes('đầy đủ') || placeholder.includes('nhập từ');
+
+        let hintText = '';
+        const allTextEls = Array.from(container.querySelectorAll('p, div, span, em, i'));
+        for (const el of allTextEls) {
+          if (el.closest('#vuanoitu-hud') || el.children.length > 3) continue;
+          const txt = (el.textContent || '').trim();
+          if (
+            txt.length >= 12 &&
+            txt.length <= 500 &&
+            /(^(động từ|danh từ|tính từ|phó từ|đại từ|từ chỉ)\b|\(1\)|như\s+[a-zA-ZÀ-ỹ])/i.test(txt)
+          ) {
+            hintText = txt;
+            break;
+          }
+        }
+
+        let extractedPattern = '';
+        for (const el of allTextEls) {
+          if (el.closest('#vuanoitu-hud')) continue;
+          const rawTxt = (el.textContent || '').trim();
+          if (rawTxt.length >= 3 && rawTxt.length <= 40 && /[a-zA-ZÀ-ỹ]/.test(rawTxt) && /_/.test(rawTxt)) {
+            const childGroups = Array.from(el.children);
+            if (childGroups.length >= 2 && childGroups.every((g) => /_/.test(g.textContent || '') || g.children.length >= 2)) {
+              const groupMasks = childGroups.map((g) => {
+                if (g.children.length >= 2) {
+                  return Array.from(g.children)
+                    .map((slot) => {
+                      const st = (slot.textContent || '').trim();
+                      return st && st !== '_' ? st : '_';
+                    })
+                    .join('');
+                }
+                return (g.textContent || '').replace(/\s+/g, '');
+              });
+              extractedPattern = groupMasks.join('   ');
+              break;
+            }
+            extractedPattern = rawTxt;
+            break;
+          }
+        }
+
+        if (!extractedPattern && (isFullWordPlaceholder || hintText)) {
+          const wordAreaCandidates = Array.from(
+            container.querySelectorAll('[class*="word"], [class*="mask"], [class*="question"], [class*="puzzle"], [class*="card"]')
+          );
+          for (const area of wordAreaCandidates) {
+            if (area.closest('#vuanoitu-hud')) continue;
+            const groups = Array.from(area.children).filter(
+              (c) => c.tagName === 'DIV' || c.tagName === 'SPAN'
+            );
+            if (groups.length >= 2 && groups.length <= 4) {
+              const sylMasks = [];
+              let validStructure = true;
+              for (const grp of groups) {
+                const slots = Array.from(grp.children);
+                if (slots.length < 2 || slots.length > 8) {
+                  validStructure = false;
+                  break;
+                }
+                let sMask = '';
+                for (const slot of slots) {
+                  const ch = (slot.textContent || '').trim().toLowerCase();
+                  if (ch.length === 1 && /[a-zA-ZÀ-ỹ]/.test(ch)) {
+                    sMask += ch;
+                  } else if (ch === '' || ch === '_' || ch === '?') {
+                    sMask += '_';
+                  } else {
+                    validStructure = false;
+                    break;
+                  }
+                }
+                if (!validStructure || !sMask.includes('_')) {
+                  validStructure = false;
+                  break;
+                }
+                sylMasks.push(sMask);
+              }
+              if (validStructure && sylMasks.length >= 2) {
+                extractedPattern = sylMasks.join('   ');
+                break;
+              }
+            }
+          }
+        }
+
+        if (!extractedPattern) return null;
+        const syllableMasks = this.lexicon.parseMaskPattern(extractedPattern);
+        if (syllableMasks.length === 0 || !syllableMasks.some((m) => m.includes('_'))) {
+          return null;
+        }
+        return { pattern: extractedPattern, syllableMasks, hint: hintText };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async handleBotTurn(context) {
+      if (this.isLocked) return;
+      this.isLocked = true;
+
+      const container = this.getGameContainer();
+      const inputEl = container.querySelector('input[class*="word-link-answer-input_input"], input[type="text"]:not(#vnt-mask-input)');
+      if (!inputEl || inputEl.disabled || inputEl.readOnly) {
+        this.isLocked = false;
+        this.transition(BotState.OPPONENT_TURN);
+        return;
+      }
+
+      // ─── KIỂM TRA CHẾ ĐỘ ĐOÁN TỪ ĐIỀN KHUYẾT (t _ _   r _ _ + GỢI Ý NGHĨA) ───
+      const maskedPuzzle = this.extractMaskedPuzzle(container, inputEl);
+      if (maskedPuzzle) {
+        const maskDisplay = maskedPuzzle.syllableMasks.join('  ');
+        const localSolved = this.lexicon.solveMaskedWord(
+          maskedPuzzle.pattern,
+          maskedPuzzle.hint,
+          this.matchContext.usedWords
+        );
+        let candidates = [...(localSolved.candidates || [])];
+
+        try {
+          const remoteRes = await Promise.race([
+            this.gateway.solveMask(maskedPuzzle.pattern, maskedPuzzle.hint),
+            new Promise((r) => setTimeout(() => r(null), 500)),
+          ]);
+          if (remoteRes && Array.isArray(remoteRes.candidates) && remoteRes.candidates.length > 0) {
+            candidates = Array.from(new Set([...remoteRes.candidates, ...candidates]));
+          }
+        } catch (e) {}
+
+        if (!this.adapter.config.autoPlay || candidates.length === 0) {
+          this.isLocked = false;
+          return;
+        }
+
+        this.transition(BotState.THINKING, { starterSyllable: maskDisplay, opponentWord: maskDisplay });
+        const timeLeft = this.getRemainingSeconds();
+        let delayMs = Math.floor(Math.random() * 800) + 1200;
+        if (timeLeft <= 4) {
+          delayMs = 80;
+        } else if (timeLeft < 90) {
+          delayMs = Math.min(delayMs, Math.max(100, (timeLeft - 3) * 1000));
+        }
+
+        await new Promise((r) => setTimeout(r, delayMs));
+        if (!inputEl || inputEl.disabled) {
+          this.isLocked = false;
+          this.transition(BotState.OPPONENT_TURN);
+          return;
+        }
+
+        this.transition(BotState.EXECUTING);
+        this.matchContext.botTurnCount++;
+
+        for (let idx = 0; idx < Math.min(candidates.length, 6); idx++) {
+          const candidate = candidates[idx];
+          if (this.getRemainingSeconds() <= 0.8) break;
+
+          this.adapter.log('EXECUTING', `Điền từ khuyết [${maskDisplay}]: "${candidate}"`);
+          await this.humanizer.simulateTyping(inputEl, '', candidate, this.adapter.config.typingSpeedMs);
+          this.transition(BotState.VALIDATING);
+          await new Promise((r) => setTimeout(r, 320));
+
+          if (inputEl.disabled) {
+            this.matchContext.usedWords.add(candidate);
+            break;
+          }
+          const hasErr = this.checkInputErrorState(inputEl);
+          const stillStuck = (inputEl.value || '').trim().toLowerCase() === candidate.toLowerCase();
+          if (!hasErr && !stillStuck) {
+            this.matchContext.usedWords.add(candidate);
+            break;
+          }
+          this.humanizer.dispatchNativeInput(inputEl, '');
+          await new Promise((r) => setTimeout(r, 150));
+        }
+
+        this.isLocked = false;
+        this.transition(BotState.OPPONENT_TURN);
+        return;
+      }
+
+      const wordEl = container.querySelector('[class*="wordWrap"] span, [class*="wordSection"] span, .trans-float-left, .is-size-1');
+      let opponentWord = '';
+      if (wordEl && wordEl.textContent) {
+        const raw = wordEl.textContent.trim().toLowerCase();
+        if (raw.length > 0 && !raw.includes('nối từ') && !raw.includes('online')) {
+          opponentWord = raw;
+        }
+      }
+
+      const inputVal = (inputEl.value || '').trim().toLowerCase();
+      let starterSyllable = '';
+      if (inputVal) {
+        starterSyllable = inputVal.split(/\s+/)[0];
+      } else if (opponentWord) {
+        const parts = opponentWord.split(/\s+/);
+        starterSyllable = parts[parts.length - 1];
+      }
+
+      if (!starterSyllable) {
+        this.isLocked = false;
+        return;
+      }
+
+      // Lưu từ đối thủ toàn cục để popup và telemetry luôn thấy
+      window.VNT_LAST_WORD = opponentWord || starterSyllable || window.VNT_LAST_WORD || '';
+
+      // Ghi nhận nước đi của đối thủ vào allMoves
+      if (opponentWord) {
+        const oppWordClean = opponentWord.trim().toLowerCase();
+        const lastMove = this.matchContext.allMoves[this.matchContext.allMoves.length - 1];
+        if (!lastMove || lastMove.word !== oppWordClean) {
+          this.matchContext.allMoves.push({
+            order: this.matchContext.allMoves.length + 1,
+            side: 'opponent',
+            word: oppWordClean,
+            timestamp: Date.now(),
+            note: 'Đối thủ đánh',
+          });
+        }
+      }
+      this.matchContext.lastActivePlayer = 'bot';
+
+      this.transition(BotState.THINKING, { starterSyllable, opponentWord });
+      const turnStartTimestamp = Date.now();
+
+      // Cào từ đối thủ vào Data Farming & NẠP VÀNG TỨC THÌ (Được game chấp nhận 100%)
+      if (opponentWord && opponentWord.split(/\s+/).length >= 2) {
+        this.matchContext.usedWords.add(opponentWord);
+        if (!this.matchContext.discoveredWords.includes(opponentWord)) {
+          this.matchContext.discoveredWords.push(opponentWord);
+          this.gateway.ingestGoldWord(opponentWord);
+          if (this.adapter.config.dataFarming) {
+            this.gateway.ingestWord(opponentWord);
+          }
+        }
+      }
+
+      // 1. Phản xạ phỏng sinh học thích ứng (Human-like Reaction Delay theo yêu cầu):
+      // - Chưa nối từ nào (hiệp đầu): Đợi trong vòng 12s tối đa (an toàn 5.5s - 7.0s để không bao giờ bị timeout lượt 10s)
+      // - Đã nối <= 3 từ: Đợi dưới 6s (khoảng 3.5s - 4.5s)
+      // - Đã nối > 3 từ: Đợi dưới 4s (khoảng 2.2s - 2.8s)
+      // (Luôn có safe cap bảo vệ theo đồng hồ timeLeft để không bao giờ bị xử thua do hết giờ)
+      const timeLeft = this.getRemainingSeconds();
+      const currentWordCount = this.matchContext.botTurnCount;
+
+      let targetDelayMs = 3000;
+      if (currentWordCount === 0) {
+        // Chưa nối từ nào: giữ nhịp suy nghĩ tự nhiên (5.5s - 7.0s, tối đa dưới 12s)
+        targetDelayMs = Math.floor(Math.random() * 1500) + 5500;
+        if (timeLeft > 12 && timeLeft < 90) {
+          targetDelayMs = Math.min(8500, Math.floor((timeLeft - 3.5) * 1000));
+        }
+      } else if (currentWordCount <= 3) {
+        // Sau 1 đến 3 từ: khoảng 3.5s - 4.5s (dưới 6s)
+        targetDelayMs = Math.floor(Math.random() * 1000) + 3500;
+      } else {
+        // Trên 3 từ: khoảng 2.2s - 2.8s (dưới 4s)
+        targetDelayMs = Math.floor(Math.random() * 600) + 2200;
+      }
+
+      // Safe Cap: Nếu đồng hồ đếm ngược của game đang chạy và thời gian còn ít,
+      // tự động co ngắn delay để bảo đảm gửi từ trước khi hết giờ ít nhất 3.0s!
+      let delayMs = targetDelayMs;
+      if (timeLeft <= 3.0) {
+        delayMs = 80; // Khẩn cấp: phản xạ ngay lập tức để không mất lượt
+      } else if (timeLeft < 90) {
+        const safeRemainingMs = Math.max(120, Math.floor((timeLeft - 3.0) * 1000));
+        delayMs = Math.min(targetDelayMs, safeRemainingMs);
+      }
+
+      const delaySecStr = (delayMs / 1000).toFixed(1);
+      this.adapter.log('THINKING', `Độ trễ phỏng sinh học [Hiệp ${currentWordCount + 1}]: ${delayMs}ms (${delaySecStr}s) | Timer còn: ${timeLeft}s`);
+      await new Promise((r) => setTimeout(r, delayMs));
+
+      if (!inputEl || inputEl.disabled) {
+        this.isLocked = false;
+        this.transition(BotState.OPPONENT_TURN);
+        return;
+      }
+
+      let killer1 = null;
+      let killer2 = null;
+      let safeMove = null;
+
+      try {
+        const searchResp = await Promise.race([
+          this.gateway.searchMinimax(starterSyllable),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 1200)),
+        ]);
+        if (searchResp) {
+          killer1 = searchResp.killer1;
+          killer2 = searchResp.killer2;
+          safeMove = searchResp.safeMove;
+
+          // Lọc triệt để: Chống lặp từ trong ván đấu & chống dùng từ đã bị cấm
+          if (killer1 && (this.matchContext.usedWords.has(killer1) || this.lexicon.bannedWords.has(killer1))) killer1 = null;
+          if (killer2 && (this.matchContext.usedWords.has(killer2) || this.lexicon.bannedWords.has(killer2))) killer2 = null;
+          if (safeMove && (this.matchContext.usedWords.has(safeMove) || this.lexicon.bannedWords.has(safeMove))) safeMove = null;
+        }
+      } catch (e) {}
+
+      // Fallback Trie địa phương nếu server lag hoặc hết từ phù hợp
+      if (!killer1 && !safeMove) {
+        const local = this.lexicon.getCandidates(starterSyllable, this.matchContext.usedWords);
+        killer1 = local.killer1;
+        killer2 = local.killer2;
+        safeMove = local.safeMove;
+      }
+
+      if (!safeMove) safeMove = killer1 || killer2 || null;
+      if (!safeMove && typeof window !== 'undefined' && window.VNT_LEXICON && window.VNT_LEXICON[starterSyllable]) {
+        const fallbackEndings = window.VNT_LEXICON[starterSyllable];
+        if (Array.isArray(fallbackEndings) && fallbackEndings.length > 0) {
+          safeMove = `${starterSyllable} ${fallbackEndings[0]}`;
+        }
+      }
+
+      this.transition(BotState.EXECUTING);
+      this.matchContext.botTurnCount++;
+      this.matchContext.lastOpponentWord = opponentWord;
+
+      const executeAttempt = async (wordToTry, moveType) => {
+        if (!wordToTry) return false;
+        const tokens = wordToTry.trim().split(/\s+/);
+        const secondWord = tokens[1];
+        if (!secondWord) return false;
+
+        this.adapter.log('EXECUTING', `Xuất đòn (${moveType.toUpperCase()}): "${wordToTry}" (Âm 2: "${secondWord}")`);
+        await this.humanizer.simulateTyping(inputEl, starterSyllable, secondWord, this.adapter.config.typingSpeedMs);
+
+        this.transition(BotState.VALIDATING);
+        await new Promise((r) => setTimeout(r, 350));
+
+        // Kiểm tra xem từ đã thực sự gửi đi chưa
+        const currentVal = (inputEl.value || '').trim().toLowerCase();
+        const expectedVal = `${starterSyllable} ${secondWord}`.trim().toLowerCase();
+        if (currentVal === expectedVal && !inputEl.disabled) {
+          const retryBtn = inputEl.parentElement?.querySelector('button') ||
+                           document.querySelector('button[class*="word-link-answer-input_btn"]') ||
+                           document.querySelector('button[aria-label*="Gửi"], button[aria-label*="gửi"]');
+          if (retryBtn && !retryBtn.disabled) {
+            this.adapter.warn('EXECUTING', `Từ "${expectedVal}" chưa gửi -> Kích hoạt bấm nút cưỡng bức!`);
+            this.humanizer.triggerButtonClick(retryBtn);
+            this.humanizer.triggerEnter(inputEl);
+            await new Promise((r) => setTimeout(r, 300));
+          }
+        }
+
+        const hasError = this.checkInputErrorState(inputEl);
+        if (hasError) {
+          this.adapter.warn('VALIDATING', `Từ bị hệ thống từ chối (${moveType}): "${wordToTry}" -> XÓA VĨNH VIỄN!`);
+          this.lexicon.banWord(wordToTry);
+          this.gateway.purgeWord(wordToTry, `Noitu.fun từ chối (${moveType})`);
+
+          this.humanizer.dispatchNativeInput(inputEl, `${starterSyllable} `);
+          await new Promise((r) => setTimeout(r, 200));
+          return false;
+        }
+
+        // Thành công! Đánh dấu từ đã sử dụng để chống lặp từ
+        this.matchContext.usedWords.add(wordToTry);
+
+        const latencyMs = Math.max(10, Date.now() - turnStartTimestamp);
+        let strategy = moveType === 'killer1' ? 'AGGRESSIVE' : (moveType === 'killer2' ? 'CONSTRICTION' : 'DEFENSIVE');
+        if (this.lexicon.learnedKillers && this.lexicon.learnedKillers.has(wordToTry)) {
+          strategy = 'AI_REPLAY_KILLER';
+        } else if (this.lexicon.learnedEscapes && (this.lexicon.learnedEscapes.get(starterSyllable) || []).includes(wordToTry)) {
+          strategy = 'AI_REPLAY_ESCAPE';
+        }
+        if (moveType === 'killer1' || moveType === 'killer2') {
+          this.matchContext.trapsUsed.push(wordToTry);
+        } else {
+          this.matchContext.fallbacksCount++;
+        }
+
+        // Ghi lại vào allMoves
+        this.matchContext.allMoves.push({
+          order: this.matchContext.allMoves.length + 1,
+          side: 'bot',
+          word: wordToTry,
+          strategy,
+          latencyMs,
+          timestamp: Date.now(),
+          note: strategy === 'AGGRESSIVE' ? 'Đòn Sát Thủ (Killer)' : 'Phản đòn',
+        });
+        this.matchContext.lastActivePlayer = 'opponent';
+
+        this.matchContext.turnLogs.push({
+          step: this.matchContext.botTurnCount,
+          opponentWord: opponentWord || starterSyllable,
+          botResponse: wordToTry,
+          strategy,
+          latencyMs,
+        });
+
+        const endingSyllable = (wordToTry.split(/\s+/).pop() || '').toLowerCase();
+        const isLethalEnding = this.lexicon.killerEndings.includes(endingSyllable);
+        const oppNextCount = (opponentNextOptions && opponentNextOptions.length) ? opponentNextOptions.length : 0;
+        const winProb = isLethalEnding ? 99 : (oppNextCount <= 2 ? 88 : (oppNextCount <= 5 ? 78 : 70));
+        const boardState = isLethalEnding ? 'checkmate' : (oppNextCount <= 2 ? 'constriction' : 'balanced');
+        const boardStateText = isLethalEnding ? '🎯 Chiếu Bí Tuyệt Đối' : (oppNextCount <= 2 ? '⚡ Siết Chặt Vòng Vây' : '🛡️ Điều Tiết Thế Trận');
+        const prediction = {
+          winProbability: winProb,
+          boardState,
+          boardStateText,
+          opponentBranches: oppNextCount,
+          turnsToKill: isLethalEnding ? 1 : (oppNextCount <= 2 ? '1 - 2' : '2 - 4'),
+          threatLevel: moveType === 'safe' ? 'medium' : 'low',
+          targetSyllable: endingSyllable,
+        };
+
+        this.gateway.sendMatchLog({
+          opponentWord: opponentWord || starterSyllable,
+          botWord: wordToTry,
+          moveType,
+          isSuccess: true,
+          status: 'playing',
+          roundIndex: this.matchContext.botTurnCount,
+          prediction,
+        });
+
+        return true;
+      };
+
+      const timeLeftNow = this.getRemainingSeconds();
+
+      // NẾU THỜI GIAN <= 2.5s -> CẮT BƯỚC NHẢY THẲNG SAFE
+      if (timeLeftNow <= 2.5) {
+        this.adapter.log('TIME_BUDGET', `Thời gian cạn (${timeLeftNow}s <= 2.5s) -> Nhảy thẳng Tier 3 Safe 100%!`);
+        await executeAttempt(safeMove, 'safe');
+        this.isLocked = false;
+        this.transition(BotState.OPPONENT_TURN);
+        return;
+      }
+
+      let success = false;
+      if (killer1 && this.adapter.config.prioritizeKillers) {
+        success = await executeAttempt(killer1, 'killer1');
+      }
+
+      if (!success && killer2 && killer2 !== killer1 && this.adapter.config.prioritizeKillers) {
+        await new Promise((r) => setTimeout(r, 250));
+        const timeLeft2 = this.getRemainingSeconds();
+        if (timeLeft2 > 2.0) {
+          success = await executeAttempt(killer2, 'killer2');
+        }
+      }
+
+      // BƯỚC 3: Hạ cánh an toàn & Thử danh sách ứng viên Safe (Multi-Fallback Recovery)
+      if (!success) {
+        await new Promise((r) => setTimeout(r, 250));
+        const candidateSafes = (local.safes && local.safes.length > 0) ? local.safes : [safeMove];
+        for (const candidate of candidateSafes) {
+          const timeLeftFallback = this.getRemainingSeconds();
+          if (timeLeftFallback <= 0.8) break;
+          success = await executeAttempt(candidate, 'safe');
+          if (success) break;
+        }
+      }
+
+      // BƯỚC 4: Fallback tối hậu nếu tất cả đều trượt
+      if (!success) {
+        await executeAttempt(safeMove, 'safe');
+      }
+
+      this.isLocked = false;
+      this.transition(BotState.OPPONENT_TURN);
+    }
+
+    handleMatchFinished(context) {
+      const { result = 'VICTORY', endReason = '' } = context;
+      this.adapter.log('MATCH_FINISHED', `Trận đấu kết thúc: [${result}] - ${endReason}`);
+      this.matchContext.endReason = endReason;
+      this.flushMatchArchive(result);
+      this.resetMatchContext();
+    }
+
+    handleLobbyWaiting() {
+      if (!this.adapter.config.autoRequeue) return;
+      const now = Date.now();
+      if (now - this.lastAutoActionTimestamp < 800) return;
+
+      const playAgainBtn = document.querySelector('button.game-result-modal_actionBtn__iaBAh.game-result-modal_primary__JpKaz') ||
+                           document.querySelector('button[class*="game-result-modal"][class*="primary"]') ||
+                           Array.from(document.querySelectorAll('button')).find((b) => {
+                             const txt = (b.textContent || '').trim().toLowerCase();
+                             return !b.disabled && (txt.includes('chơi lại') || txt.includes('tìm trận') || txt.includes('tái đấu'));
+                           });
+
+      if (playAgainBtn && !playAgainBtn.disabled) {
+        this.lastAutoActionTimestamp = now;
+        this.adapter.log('LOBBY', 'Tự động bấm [Chơi Lại] tiếp tục leo rank...');
+        playAgainBtn.click();
+        return;
+      }
+
+      if (window.location.pathname.startsWith('/rank')) {
+        const isSearching = Boolean(
+          document.body.innerText.includes('Đang tìm trận') ||
+          document.body.innerText.includes('Đang tìm đối thủ')
+        );
+        if (isSearching) return;
+
+        const wordLinkCard = document.querySelector('button.mode-picker_modeCardWordLink__2xaJ4') ||
+                             Array.from(document.querySelectorAll('button, div[role="button"]')).find((b) => {
+                               const txt = b.textContent || '';
+                               return txt.includes('Nối Từ') && !txt.includes('Mở Rộng');
+                             });
+
+        if (wordLinkCard && !wordLinkCard.disabled) {
+          this.lastAutoActionTimestamp = now;
+          this.adapter.log('LOBBY', 'Tự động chọn chế độ [Nối Từ] tìm trận mới...');
+          wordLinkCard.click();
+          return;
+        }
+      }
+
+      const readyBtn = document.querySelector('.game-preparation_ready___DOid, button[class*="ready"]') ||
+                       Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim().toLowerCase() === 'sẵn sàng');
+      if (readyBtn && !readyBtn.disabled) {
+        this.lastAutoActionTimestamp = now;
+        this.adapter.log('LOBBY', 'Tự động bấm [Sẵn Sàng]...');
+        readyBtn.click();
+      }
+    }
+
+    evaluateDOM() {
+      const container = this.getGameContainer();
+      const inputEl = container.querySelector('input[class*="word-link-answer-input_input"], input[type="text"]');
+      const wordEl = container.querySelector('[class*="wordWrap"] span, [class*="wordSection"] span, .trans-float-left, .is-size-1');
+      const timerEl = container.querySelector('[class*="base-timer_timeText"], div[role="timer"], [class*="timeText"]');
+      const hasResultModal = Boolean(document.querySelector('[class*="game-result-modal"], [class*="result-modal"]'));
+
+      const isMatchActive = Boolean(inputEl || wordEl || timerEl);
+
+      // 1. Kiểm tra màn hình kết quả ván đấu (Thắng / Thua / Đối thủ rời / Hết giờ)
+      const bodyText = (document.body.innerText || '').toLowerCase();
+      const hasDirectResultText = (
+        bodyText.includes('chiến thắng') ||
+        bodyText.includes('bạn thắng') ||
+        bodyText.includes('đối thủ đã rời') ||
+        bodyText.includes('đối thủ đã thoát') ||
+        bodyText.includes('thất bại') ||
+        bodyText.includes('bạn thua') ||
+        bodyText.includes('bị xử thua')
+      );
+
+      if (hasResultModal || (hasDirectResultText && !isMatchActive)) {
+        if (this.state !== BotState.MATCH_FINISHED) {
+          const outcome = detectMatchOutcome(container, this.matchContext.lastActivePlayer, this.matchContext);
+          this.transition(BotState.MATCH_FINISHED, { result: outcome.result, endReason: outcome.reason });
+        }
+        this.handleLobbyWaiting();
+        return;
+      }
+
+      // 2. Kiểm tra sảnh chờ hoặc phòng chờ (CHỈ KHI KHÔNG TRONG TRẬN ĐẤU)
+      if ((window.location.pathname === '/rank' || window.location.pathname === '/online') && !isMatchActive) {
+        if (!this.matchContext.isArchived && (this.matchContext.botTurnCount > 0 || this.matchContext.allMoves.length > 0)) {
+          const outcome = detectMatchOutcome(container, this.matchContext.lastActivePlayer, this.matchContext);
+          this.flushMatchArchive(outcome.result);
+          this.resetMatchContext();
+        }
+        if (this.state !== BotState.LOBBY_WAITING) {
+          this.transition(BotState.LOBBY_WAITING);
+        }
+        this.handleLobbyWaiting();
+        return;
+      }
+
+      if (inputEl && !inputEl.disabled && !inputEl.readOnly) {
+        if (this.state !== BotState.BOT_TURN && this.state !== BotState.THINKING && this.state !== BotState.EXECUTING && this.state !== BotState.VALIDATING) {
+          this.transition(BotState.BOT_TURN);
+        }
+      } else {
+        if (this.state !== BotState.OPPONENT_TURN && this.state !== BotState.THINKING && this.state !== BotState.EXECUTING && this.state !== BotState.VALIDATING) {
+          this.transition(BotState.OPPONENT_TURN);
+        }
+      }
+    }
+  }
+
+  // =========================================================================
+  // GIAO DIỆN NỔI (FLOATING HUD) TRÊN TRANG CHO USERSCRIPT
+  // =========================================================================
+  function createFloatingHUD(adapter, lexiconEngine) {
+    if (document.getElementById('vuanoitu-hud')) return;
+
+    const hud = document.createElement('div');
+    hud.id = 'vuanoitu-hud';
+    hud.innerHTML = `
+      <div id="vnt-header" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#010102;color:#fff;border-radius:12px 12px 0 0;font-size:12px;font-weight:bold;cursor:move;user-select:none;">
+        <span style="display:flex;align-items:center;gap:6px;">
+          <span id="vnt-status-dot" style="display:inline-block;width:8px;height:8px;background:${adapter.config.autoPlay ? '#10b981' : '#71717a'};border-radius:50%;box-shadow:${adapter.config.autoPlay ? '0 0 8px #10b981' : 'none'};"></span>
+          VUA NỐI TỪ V6.0 FSM
+        </span>
+        <button id="vnt-min-btn" style="background:none;border:none;color:#a1a1aa;cursor:pointer;font-size:14px;line-height:1;">—</button>
+      </div>
+      <div id="vnt-body" style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:11px;background:#18181b;color:#e4e4e7;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span>⚡ Tự Động Đấu (Auto-Play):</span>
+          <input type="checkbox" id="vnt-toggle-auto" ${adapter.config.autoPlay ? 'checked' : ''} style="cursor:pointer;" />
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span>🎯 Ưu Tiên Từ Bí (Killers):</span>
+          <input type="checkbox" id="vnt-toggle-killer" ${adapter.config.prioritizeKillers ? 'checked' : ''} style="cursor:pointer;" />
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span>🔄 Tự Tìm Trận & Tái Đấu:</span>
+          <input type="checkbox" id="vnt-toggle-requeue" ${adapter.config.autoRequeue ? 'checked' : ''} style="cursor:pointer;" />
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid #27272a;padding-top:6px;">
+          <span>📦 Tự Tải Sau 30 Ván:</span>
+          <input type="checkbox" id="vnt-toggle-auto30" checked style="cursor:pointer;" />
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;font-size:10px;color:#a1a1aa;">
+          <span>Tiến độ đếm:</span>
+          <span style="color:#38bdf8;font-weight:bold;">📦 <b id="vnt-stat-progress-30">0/30</b> ván</span>
+        </div>
+
+        <!-- NÚT XUẤT VÁN ĐẤU VỀ MÁY TRỰC TIẾP -->
+        <div style="display:flex;gap:4px;margin-top:2px;">
+          <button id="vnt-export-last-btn" style="flex:1;padding:5px 4px;background:#059669;color:white;border:none;border-radius:6px;font-size:10px;font-weight:bold;cursor:pointer;" title="Tải file .TXT ván vừa đấu">
+            📥 Ván Này
+          </button>
+          <button id="vnt-export-30-btn" style="flex:1;padding:5px 4px;background:#0284c7;color:white;border:none;border-radius:6px;font-size:10px;font-weight:bold;cursor:pointer;" title="Tải báo cáo 30 ván gần nhất">
+            📦 30 Ván
+          </button>
+          <button id="vnt-export-all-btn" style="flex:1;padding:5px 4px;background:#3f3f46;color:#e4e4e7;border:none;border-radius:6px;font-size:10px;font-weight:bold;cursor:pointer;" title="Tải toàn bộ lịch sử">
+            📋 Toàn Bộ
+          </button>
+        </div>
+
+        <!-- NÚT NẠP LOG HUẤN LUYỆN AI (GẬY ÔNG ĐẬP LƯNG ÔNG) -->
+        <div style="display:flex;flex-direction:column;gap:4px;margin-top:2px;">
+          <input type="file" id="vnt-import-log-file-input" accept=".json,.txt" style="display:none;" />
+          <button id="vnt-import-log-btn" style="width:100%;padding:6px 8px;background:linear-gradient(135deg,#9333ea,#7e22ce);color:white;border:1px solid #c084fc;border-radius:6px;font-size:10px;font-weight:bold;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px;" title="Chọn file JSON/TXT ván đấu để quét danh sách từ trước khi bấm Tải Lên">
+            📂 Chọn File Log Quét Từ
+          </button>
+          <div id="vnt-import-preview-box" style="display:none;flex-direction:column;gap:4px;padding:6px;background:#27272a;border:1px solid #f59e0b;border-radius:6px;font-size:10px;">
+            <div id="vnt-import-preview-text" style="color:#fde68a;font-weight:bold;line-height:1.3;"></div>
+            <div style="display:flex;gap:4px;">
+              <button id="vnt-confirm-upload-btn" style="flex:1;padding:5px 6px;background:#f59e0b;color:#000;border:none;border-radius:4px;font-size:10px;font-weight:bold;cursor:pointer;">
+                ☁️ Tải Lên Từ
+              </button>
+              <button id="vnt-cancel-upload-btn" style="padding:5px 6px;background:#3f3f46;color:#fff;border:none;border-radius:4px;font-size:10px;cursor:pointer;">
+                Hủy
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button id="vnt-open-monitor-btn" style="width:100%;padding:6px 8px;background:linear-gradient(135deg,#0284c7,#0369a1);color:white;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;margin-top:2px;">
+          📡 Mở Web Giám Sát Live
+        </button>
+      </div>
+    `;
+
+    Object.assign(hud.style, {
+      position: 'fixed',
+      bottom: '24px',
+      right: '24px',
+      width: '240px',
+      background: '#18181b',
+      border: '1px solid #27272a',
+      borderRadius: '12px',
+      boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)',
+      zIndex: '999999',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      transition: 'opacity 0.2s',
+    });
+
+    document.body.appendChild(hud);
+
+    // Xử lý kéo thả HUD
+    const header = hud.querySelector('#vnt-header');
+    let isDragging = false, startX, startY, initX, initY;
+    header.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      const rect = hud.getBoundingClientRect();
+      initX = rect.left;
+      initY = rect.top;
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      hud.style.left = `${initX + (e.clientX - startX)}px`;
+      hud.style.top = `${initY + (e.clientY - startY)}px`;
+      hud.style.bottom = 'auto';
+      hud.style.right = 'auto';
+    });
+
+    window.addEventListener('mouseup', () => { isDragging = false; });
+
+    // Thu nhỏ / mở rộng
+    const minBtn = hud.querySelector('#vnt-min-btn');
+    const body = hud.querySelector('#vnt-body');
+    minBtn.addEventListener('click', () => {
+      const isHidden = body.style.display === 'none';
+      body.style.display = isHidden ? 'flex' : 'none';
+      minBtn.textContent = isHidden ? '—' : '+';
+    });
+
+    // Cập nhật tiến độ 30 ván hiện tại từ localStorage
+    try {
+      const c = parseInt(localStorage.getItem('vnt_match_count_30') || localStorage.getItem('vnt_match_count_10') || '0', 10);
+      const el = hud.querySelector('#vnt-stat-progress-30') || hud.querySelector('#vnt-stat-progress-10');
+      if (el) el.textContent = `${c % 30}/30`;
+      const chk = hud.querySelector('#vnt-toggle-auto30');
+      if (chk) chk.checked = localStorage.getItem('vnt_auto_download_30_enabled') !== 'false';
+    } catch (e) {}
+
+    
+    const updateLearnedStats = () => {
+      const activeLex = lexiconEngine || window.VNT_LEXICON;
+      if (activeLex) {
+        const kEl = hud.querySelector('#vnt-stat-learned-killers');
+        if (kEl) kEl.textContent = `${activeLex.learnedKillers?.size || 0}`;
+        let escCount = 0;
+        if (activeLex.learnedEscapes) {
+          activeLex.learnedEscapes.forEach((arr) => { escCount += (arr?.length || 0); });
+        }
+        const eEl = hud.querySelector('#vnt-stat-learned-escapes');
+        if (eEl) eEl.textContent = `${escCount}`;
+      }
+    };
+    updateLearnedStats();
+
+    // Checkbox events
+    hud.querySelector('#vnt-toggle-auto').addEventListener('change', (e) => {
+      adapter.saveConfig('autoPlay', e.target.checked);
+      const dot = hud.querySelector('#vnt-status-dot');
+      if (dot) {
+        dot.style.background = e.target.checked ? '#10b981' : '#71717a';
+        dot.style.boxShadow = e.target.checked ? '0 0 8px #10b981' : 'none';
+      }
+    });
+    hud.querySelector('#vnt-toggle-killer').addEventListener('change', (e) => {
+      adapter.saveConfig('prioritizeKillers', e.target.checked);
+    });
+    hud.querySelector('#vnt-toggle-requeue').addEventListener('change', (e) => {
+      adapter.saveConfig('autoRequeue', e.target.checked);
+    });
+    hud.querySelector('#vnt-toggle-auto30')?.addEventListener('change', (e) => {
+      localStorage.setItem('vnt_auto_download_30_enabled', e.target.checked ? 'true' : 'false');
+    });
+
+    // Xử lý nút Tải Ván Này (.TXT)
+    hud.querySelector('#vnt-export-last-btn')?.addEventListener('click', () => {
+      const last = window.VNT_LAST_MATCH_ARCHIVE;
+      if (!last) {
+        alert('Chưa hoàn thành ván đấu nào trong phiên này để xuất!');
+        return;
+      }
+      const rawRes = last.result || last.matchMetadata?.result || 'UNKNOWN';
+      const isWin = rawRes.includes('VICTORY') || rawRes.includes('THẮNG') || rawRes.includes('WIN');
+      const filename = `tran_${Date.now()}_${isWin ? 'THANG' : 'THUA'}.txt`;
+      const txt = formatSingleMatchReport(last);
+      triggerDownloadTxt(filename, txt);
+    });
+
+    // Xử lý nút Tải 30 Ván Gần Nhất
+    (hud.querySelector('#vnt-export-30-btn') || hud.querySelector('#vnt-export-10-btn'))?.addEventListener('click', () => {
+      try {
+        const raw = localStorage.getItem('vnt_match_history_full');
+        const list = raw ? JSON.parse(raw) : [];
+        if (list.length === 0) {
+          alert('Chưa có ván đấu nào trong lịch sử để xuất!');
+          return;
+        }
+        const last30 = list.slice(0, 30);
+        const txt30 = format30MatchesReport(last30);
+        triggerDownloadTxt(`tong_hop_30_van_dau_${Date.now()}.txt`, txt30);
+      } catch (err) {
+        alert('Lỗi đọc dữ liệu ván đấu!');
+      }
+    });
+
+    // Xử lý nút Xuất Lịch Sử Toàn Bộ
+    hud.querySelector('#vnt-export-all-btn')?.addEventListener('click', () => {
+      try {
+        const raw = localStorage.getItem('vnt_match_history_full');
+        const list = raw ? JSON.parse(raw) : [];
+        if (list.length === 0) {
+          alert('Chưa có lịch sử ván đấu nào được ghi lại.');
+          return;
+        }
+        const summaryTxt = format10MatchesReport(list);
+        triggerDownloadTxt(`lich_su_${list.length}_van_dau.txt`, summaryTxt);
+      } catch (err) {
+        alert('Lỗi đọc dữ liệu lịch sử!');
+      }
+    });
+
+    // Nút Nạp Log Học Đòn trực tiếp trên Floating HUD (Chỉ quét trước, bấm nút Tải Lên mới nạp)
+    const importInput = hud.querySelector('#vnt-import-log-file-input');
+    const importBtn = hud.querySelector('#vnt-import-log-btn');
+    const previewBox = hud.querySelector('#vnt-import-preview-box');
+    const previewText = hud.querySelector('#vnt-import-preview-text');
+    const confirmUploadBtn = hud.querySelector('#vnt-confirm-upload-btn');
+    const cancelUploadBtn = hud.querySelector('#vnt-cancel-upload-btn');
+    let pendingMinedData = null;
+    let pendingLogsCount = 0;
+
+    if (importBtn && importInput) {
+      importBtn.addEventListener('click', () => {
+        importInput.click();
+      });
+
+      importInput.addEventListener('change', (e) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+        const file = files[0];
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+          try {
+            const content = evt.target.result;
+            let logs = [];
+            if (file.name.endsWith('.json')) {
+              try {
+                const parsed = JSON.parse(content);
+                logs = Array.isArray(parsed) ? parsed : [parsed];
+              } catch {
+                alert('Tệp JSON không hợp lệ!');
+                return;
+              }
+            } else {
+              logs = parseTxtMatchLogs(content, file.name);
+            }
+
+            if (!logs || logs.length === 0) {
+              alert('Không tìm thấy dữ liệu ván đấu nào trong tệp!');
+              return;
+            }
+
+            pendingMinedData = parseAndMineMatchLogs(logs);
+            pendingLogsCount = logs.length;
+
+            if (previewBox && previewText) {
+              previewText.innerHTML = `Đã quét ${pendingLogsCount} ván: +${pendingMinedData.newKillers.length} Sát thủ, +${pendingMinedData.newEscapes.length} Phá bí.<br/><span style="color:#a1a1aa;font-weight:normal;">Bấm "☁️ Tải Lên Từ" để xác nhận nạp!</span>`;
+              previewBox.style.display = 'flex';
+            }
+          } catch (err) {
+            alert('Lỗi phân tích tệp log: ' + err.message);
+          } finally {
+            importInput.value = '';
+          }
+        };
+        reader.readAsText(file);
+      });
+
+      if (confirmUploadBtn) {
+        confirmUploadBtn.addEventListener('click', () => {
+          if (!pendingMinedData) return;
+          const mined = pendingMinedData;
+          lexiconEngine.importMinedKnowledge(mined, true);
+
+          const kEl = hud.querySelector('#vnt-stat-learned-killers');
+          if (kEl) kEl.textContent = `${lexiconEngine.learnedKillers.size}`;
+          let escCount = 0;
+          if (lexiconEngine.learnedEscapes) {
+            lexiconEngine.learnedEscapes.forEach((arr) => { escCount += (arr?.length || 0); });
+          }
+          const eEl = hud.querySelector('#vnt-stat-learned-escapes');
+          if (eEl) eEl.textContent = `${escCount}`;
+
+          const actionEl = hud.querySelector('#vnt-last-action');
+          if (actionEl) {
+            actionEl.innerHTML = `<span style="color:#c084fc;font-weight:bold;">☁️ Đã tải lên: +${mined.newKillers.length} sát thủ, +${mined.newEscapes.length} cứu sinh!</span>`;
+          }
+
+          try {
+            const fetchFn = typeof adapter.fetch === 'function' ? adapter.fetch.bind(adapter) : fetch;
+            fetchFn(`${adapter.config.apiServer}/api/bot/import-mined-knowledge`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                newKillers: mined.newKillers,
+                newEscapes: mined.newEscapes,
+                bannedWords: mined.bannedWords,
+                source: 'noitu.fun'
+              })
+            }).catch(() => {});
+          } catch (err) {}
+
+          if (previewBox) previewBox.style.display = 'none';
+          pendingMinedData = null;
+          alert(`☁️ Đã tải lên thành công ${pendingLogsCount} ván đấu!\n+ ${mined.newKillers.length} Đòn sát thủ (Priority 9999)\n+ ${mined.newEscapes.length} Đòn cứu sinh (Priority 8888)`);
+        });
+      }
+
+      if (cancelUploadBtn) {
+        cancelUploadBtn.addEventListener('click', () => {
+          pendingMinedData = null;
+          if (previewBox) previewBox.style.display = 'none';
+        });
+      }
+    }
+
+    // Nút mở live monitor
+    hud.querySelector('#vnt-open-monitor-btn')?.addEventListener('click', () => {
+      const server = adapter.config.apiServer || 'https://www.vuanoitu.duckdns.org';
+      window.open(`${server}/?tab=live_monitor`, '_blank');
+    });
+  }
+
+  // =========================================================================
+  // BOOTSTRAP HỆ THỐNG V6.0 TRÊN USERSCRIPT
+  // =========================================================================
+  async function bootstrap() {
+    const adapter = new VNTAdapter();
+    await adapter.init();
+
+    const lexiconEngine = new VNTLexiconEngine(adapter);
+    await lexiconEngine.init();
+    window.VNT_LEXICON = lexiconEngine;
+
+    const humanizer = new VNTInputHumanizer(adapter);
+    const gateway = new VNTGateway(adapter);
+    const fsm = new GameStateMachine(adapter, lexiconEngine, humanizer, gateway);
+
+    createFloatingHUD(adapter, lexiconEngine);
+
+    // Heartbeat 10s qua BFF Gateway
+    const sendPulse = () => {
+      try {
+        const inputEl = fsm.getGameContainer().querySelector('input[type="text"]');
+        const status = (inputEl && !inputEl.disabled) ? 'in_match' : 'lobby';
+        gateway.sendHeartbeat({
+          status,
+          roomCode: window.location.pathname,
+          currentOpponent: fsm.matchContext.lastOpponentWord ? 'active' : '',
+          matchResult: fsm.matchContext.lastHeartbeatResult,
+        });
+        fsm.matchContext.lastHeartbeatResult = null;
+      } catch (e) {}
+    };
+    sendPulse();
+    setInterval(sendPulse, 10000);
+
+    // DOM Mutation Observer (Event-driven)
+    let debounceTimer = null;
+    const scheduleDOMCheck = () => {
+      if (fsm.isLocked || fsm.state === BotState.THINKING || fsm.state === BotState.EXECUTING) {
+        return;
+      }
+      if (debounceTimer) return;
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        fsm.evaluateDOM();
+      }, 50);
+    };
+
+    const targetNode = document.querySelector('#main-wrapper') || document.body;
+    const observer = new MutationObserver(() => scheduleDOMCheck());
+    observer.observe(targetNode, { childList: true, subtree: true, characterData: true });
+
+    // Watchdog Deadman Switch (1.5s)
+    setInterval(() => {
+      if (fsm.isLocked && Date.now() - fsm.stateEnteredTimestamp > 18000) {
+        adapter.warn('WATCHDOG', 'FSM bị kẹt > 16s. Tự động giải phóng khóa!');
+        fsm.isLocked = false;
+        fsm.transition(BotState.OPPONENT_TURN);
+      }
+      scheduleDOMCheck();
+    }, 1500);
+
+    // SPA Navigation Monitor & Beacon Flush
+    const handleSpaNav = () => {
+      const currentUrl = window.location.href;
+      if (currentUrl !== fsm.lastObservedUrl) {
+        fsm.lastObservedUrl = currentUrl;
+        if (!fsm.matchContext.isArchived && (fsm.matchContext.botTurnCount > 0 || fsm.matchContext.turnLogs.length > 0)) {
+          fsm.flushMatchArchive('NAVIGATE');
+        }
+        fsm.resetMatchContext();
+        fsm.transition(BotState.IDLE);
+        scheduleDOMCheck();
+      }
+    };
+    window.addEventListener('popstate', handleSpaNav);
+    const origPush = history.pushState;
+    history.pushState = function (...args) {
+      const res = origPush.apply(this, args);
+      handleSpaNav();
+      return res;
+    };
+    const origReplace = history.replaceState;
+    history.replaceState = function (...args) {
+      const res = origReplace.apply(this, args);
+      handleSpaNav();
+      return res;
+    };
+
+    // Beacon Flush khi đóng tab hoặc rời trang
+    window.addEventListener('beforeunload', () => {
+      if (!fsm.matchContext.isArchived && (fsm.matchContext.botTurnCount > 0 || fsm.matchContext.turnLogs.length > 0)) {
+        fsm.flushMatchArchive('UNLOAD');
+      }
+    });
+
+    fsm.evaluateDOM();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrap);
+  } else {
+    bootstrap();
+  }
+})();
