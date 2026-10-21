@@ -90,7 +90,7 @@ for (let i = 0; i < syl.length - 1; i++) words.push(syl[i] + " " + syl[i + 1]);
 
 document.getElementById("count").textContent = words.length;
 document.getElementById("list").innerHTML =
-  words.map((w, i) => `<li><b>${i + 1}</b><span>&nbsp;</span></li>`).join("");
+  words.map((w, i) => `<li><b>${i + 1}</b><span>${w}</span></li>`).join("");
 
 
 let running=false,last=0,pos=0;
